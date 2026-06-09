@@ -1,0 +1,59 @@
+/*
+ * ESP32 WiFi Repeater + sensor/MQTT/relay edge node.
+ *
+ * - Concurrent AP+STA with NAPT: devices on the repeater AP are routed out
+ *   through the upstream network (a true repeater).
+ * - Configured entirely over WiFi via a captive-portal setup page; settings
+ *   persist in NVS. Factory reset available from the page.
+ * - Optional sensors (BME280 / DS18B20 / 2x analog) published to MQTT every
+ *   N seconds, with per-metric alert thresholds.
+ * - Two relay/SSR outputs driven by timer / sensor threshold / button rules,
+ *   and controllable + reportable over MQTT.
+ *
+ * This .ino is orchestration only; the logic lives in the module tabs:
+ *   config, net, sensors, relays, mqtt, web_portal (+ web_page.h).
+ *
+ * Default repeater AP: ESP32-repeaterAP / 12345678 (change it on the page).
+ */
+
+#include "config.h"
+#include "net.h"
+#include "sensors.h"
+#include "relays.h"
+#include "mqtt.h"
+#include "web_portal.h"
+
+static unsigned long lastPublish = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  config.load();      // settings from NVS (defaults if first boot)
+  Net::begin();       // AP + STA + NAPT + captive DNS
+  Sensors::begin();   // init enabled sensor buses
+  Relays::begin();    // configure relay pins + initial state
+  Mqtt::begin();      // configure client (connects in loop)
+  WebPortal::begin(); // routes + web server
+}
+
+void loop() {
+  Net::loop();         // DNS pump + upstream reconnect watchdog + NAPT
+  WebPortal::handle(); // serve the setup portal
+  Sensors::tick();     // non-blocking DS18B20 conversion
+  Relays::update();    // evaluate relay rules every tick
+  Mqtt::loop();        // maintain MQTT connection
+
+  // Publish relay state changes immediately (rules, button, MQTT command).
+  for (int i = 0; i < 2; i++) {
+    if (Relays::consumeChanged(i)) Mqtt::publishRelayState(i, Relays::getState(i));
+  }
+
+  // Periodic sensor publish.
+  unsigned long intervalMs = (unsigned long)config.mqtt.publishIntervalSec * 1000UL;
+  if (millis() - lastPublish >= intervalMs) {
+    lastPublish = millis();
+    Readings r = Sensors::readAll();
+    Mqtt::publishReadings(r);
+  }
+}
