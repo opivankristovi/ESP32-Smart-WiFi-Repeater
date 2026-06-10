@@ -2,6 +2,7 @@
 #include "web_page.h"
 #include "config.h"
 #include "net.h"
+#include "timekeeper.h"
 #include "sensors.h"
 #include "relays.h"
 #include "mqtt.h"
@@ -94,6 +95,43 @@ static String sourceOptions(MetricSource sel) {
   return o;
 }
 
+// ---- Time-of-day helpers (clock-schedule slots) -----------------------------
+static String minToHHMM(uint16_t m) {
+  char b[6];
+  snprintf(b, sizeof(b), "%02u:%02u", m / 60 % 24, m % 60);
+  return String(b);
+}
+
+static uint16_t parseHHMM(const String& s) {
+  int colon = s.indexOf(':');
+  if (colon < 1) return 0;
+  int h = s.substring(0, colon).toInt();
+  int m = s.substring(colon + 1).toInt();
+  return constrain(h, 0, 23) * 60 + constrain(m, 0, 59);
+}
+
+// Common timezones, stored as POSIX TZ strings (DST rules included).
+struct TzEntry { const char* name; const char* tz; };
+static const TzEntry kTimezones[] = {
+    {"Brussels / Paris / Berlin (CET)", "CET-1CEST,M3.5.0,M10.5.0/3"},
+    {"London / Dublin (GMT/BST)", "GMT0BST,M3.5.0/1,M10.5.0"},
+    {"Athens / Helsinki (EET)", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
+    {"UTC", "UTC0"},
+    {"Moscow (MSK)", "MSK-3"},
+    {"Dubai (GST)", "<+04>-4"},
+    {"India (IST)", "IST-5:30"},
+    {"China (CST)", "CST-8"},
+    {"Japan (JST)", "JST-9"},
+    {"Sydney (AEST/AEDT)", "AEST-10AEDT,M10.1.0,M4.1.0/3"},
+    {"Auckland (NZST/NZDT)", "NZST-12NZDT,M9.5.0,M4.1.0/3"},
+    {"New York (EST/EDT)", "EST5EDT,M3.2.0,M11.1.0"},
+    {"Chicago (CST/CDT)", "CST6CDT,M3.2.0,M11.1.0"},
+    {"Denver (MST/MDT)", "MST7MDT,M3.2.0,M11.1.0"},
+    {"Phoenix (MST)", "MST7"},
+    {"Los Angeles (PST/PDT)", "PST8PDT,M3.2.0,M11.1.0"},
+    {"S&atilde;o Paulo (BRT)", "<-03>3"},
+};
+
 // ---------------------------------------------------------------------------
 // Threshold parsing
 // ---------------------------------------------------------------------------
@@ -115,24 +153,54 @@ static String warningBanner() {
          "&mdash; this notice disappears once you do.</div>";
 }
 
-static String statusCard() {
-  String s;
-  if (Net::staConnected()) {
-    s = "Connected to <strong>" + esc(Net::staSsid) + "</strong> &middot; IP " +
-        WiFi.localIP().toString();
-  } else if (!Net::staSsid.isEmpty()) {
-    s = "Saved network <strong>" + esc(Net::staSsid) +
-        "</strong> &middot; not connected (check password / range).";
-  } else {
-    s = "Not configured yet &mdash; pick a network below.";
+// Sticky app bar with live connection dots, plus the tab pill bar.
+static String appShell() {
+  String wifiDot = Net::staConnected() ? "ok" : "";
+  String mqttDot = (config.mqtt.enabled && Mqtt::connected()) ? "ok" : "";
+  String s = "<header class=\"hdr\"><div class=\"appbar\">"
+             "<h1>ESP32 Repeater</h1>"
+             "<span class=\"dotlbl\"><span class=\"dot " + wifiDot +
+             "\"></span>WiFi</span>"
+             "<span class=\"dotlbl\"><span class=\"dot " + mqttDot +
+             "\"></span>MQTT</span></div>";
+  struct { const char* id; const char* label; } tabs[] = {
+      {"home", "Home"},     {"network", "Network"}, {"mqtt", "MQTT"},
+      {"sensors", "Sensors"}, {"relays", "Relays"}, {"system", "System"}};
+  s += "<nav class=\"nav\">";
+  for (auto& t : tabs) {
+    s += "<button type=\"button\" data-tab=\"" + String(t.id) +
+         "\" onclick=\"showTab('" + t.id + "')\">" + t.label + "</button>";
   }
-  s += " &middot; MQTT " +
-       String(config.mqtt.enabled ? (Mqtt::connected() ? "connected"
-                                                        : "configured, offline")
-                                  : "disabled");
-  return "<div class=\"card\"><h1>ESP32 WiFi Repeater</h1>"
-         "<div class=\"status\">" + s + "</div>"
-         "<h2>Live readings</h2><div id=\"live\"></div></div>";
+  s += "</nav></header>";
+  return s;
+}
+
+static String statusCard() {
+  String s = "<div class=\"status\">Upstream ";
+  if (Net::staConnected()) {
+    s += "<span class=\"pill ok\">connected</span> <strong>" +
+         esc(Net::staSsid) + "</strong> &middot; IP " +
+         WiFi.localIP().toString();
+  } else if (!Net::staSsid.isEmpty()) {
+    s += "<span class=\"pill bad\">offline</span> <strong>" +
+         esc(Net::staSsid) + "</strong> &middot; check password / range";
+  } else {
+    s += "<span class=\"pill idle\">not set up</span> pick a network in the "
+         "Network tab";
+  }
+  s += "<br>MQTT ";
+  s += config.mqtt.enabled
+           ? (Mqtt::connected() ? "<span class=\"pill ok\">connected</span>"
+                                : "<span class=\"pill bad\">offline</span>")
+           : "<span class=\"pill idle\">disabled</span>";
+  s += " &middot; Clock ";
+  s += TimeKeeper::synced()
+           ? "<span class=\"pill ok\">" + TimeKeeper::fmtNow() + "</span>"
+           : "<span class=\"pill idle\">not synced</span>";
+  s += "</div>";
+  return "<div class=\"card\"><h2>Status</h2>" + s +
+         "<h2 style=\"margin-top:1rem\">Live readings</h2>"
+         "<div id=\"live\"></div></div>";
 }
 
 static String wifiCard() {
@@ -326,24 +394,64 @@ static String sensorsCard() {
   return s;
 }
 
+// Wraps mode-specific relay options; modeChanged() in PAGE_FOOT shows only
+// the block matching the selected mode. Inactive blocks render hidden so the
+// page doesn't flash every option before the script runs.
+static String modeSec(int relayN, int mode, RelayMode current,
+                      const String& inner) {
+  return "<div class=\"msec\" data-r=\"" + String(relayN) + "\" data-m=\"" +
+         String(mode) + "\"" +
+         ((int)current == mode ? "" : " style=\"display:none\"") + ">" +
+         inner + "</div>";
+}
+
+static String scheduleSlots(const String& p, const RelayConfig& r) {
+  const char* dayNames[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
+  String s = "<p class=\"muted\" style=\"margin:.2rem 0 .4rem\">Switches by "
+             "the clock (set the timezone in the System tab). Stays OFF until "
+             "the time is NTP-synced. Spans past midnight are fine.</p>";
+  for (int k = 0; k < kSlotsPerRelay; k++) {
+    const ScheduleSlot& sl = r.sched[k];
+    String sp = p + "_s" + String(k);
+    s += "<fieldset><legend>Slot " + String(k + 1) + "</legend>";
+    s += checkbox(sp + "_en", "Enabled", sl.enabled);
+    s += "<div class=\"row\"><div><label>ON at</label><input type=\"time\" "
+         "name=\"" + sp + "_on\" value=\"" + minToHHMM(sl.onMin) + "\"></div>"
+         "<div><label>OFF at</label><input type=\"time\" name=\"" + sp +
+         "_off\" value=\"" + minToHHMM(sl.offMin) + "\"></div></div>";
+    s += "<div class=\"days\">";
+    for (int d = 0; d < 7; d++) {
+      s += "<label class=\"chip\"><input type=\"checkbox\" name=\"" + sp +
+           "_d" + String(d) + "\"" + ((sl.days >> d) & 1 ? " checked" : "") +
+           "><span>" + dayNames[d] + "</span></label>";
+    }
+    s += "</div></fieldset>";
+  }
+  return s;
+}
+
 static String relaysCard() {
   String s = "<div class=\"card\"><h2>Relays / SSR outputs</h2>"
              "<form method=\"POST\" action=\"/relays\">";
-  const char* modeNames[] = {"Off", "Manual", "Timer (cyclic)",
-                             "Sensor threshold", "Button toggle"};
+  const char* modeNames[] = {"Off",           "Manual",
+                             "Timer (cyclic)", "Sensor threshold",
+                             "Button toggle",  "Clock schedule"};
   for (int i = 0; i < 2; i++) {
-    String p = "r" + String(i + 1);
+    int n = i + 1;
+    String p = "r" + String(n);
     const RelayConfig& r = config.relays[i];
-    s += "<fieldset><legend>Relay " + String(i + 1) + " (GPIO" +
+    s += "<fieldset><legend>Relay " + String(n) + " (GPIO" +
          String(PIN_RELAY[i]) + ")</legend>";
     s += textField(p + "_name", "Name", r.name, "text", "",
                    "Friendly name for this output, shown in Home Assistant.");
     s += "<label>Mode" +
          info("Off = always off. Manual = controlled by you / MQTT. "
               "Timer = cycle on/off. Sensor threshold = switch on a reading. "
-              "Button toggle = flip on each button press.") +
-         "</label><select name=\"" + p + "_mode\">";
-    for (int k = 0; k < 5; k++) {
+              "Button toggle = flip on each button press. Clock schedule = "
+              "on/off at set times of day (needs NTP time).") +
+         "</label><select id=\"" + p + "_mode\" name=\"" + p +
+         "_mode\" onchange=\"modeChanged(" + String(n) + ")\">";
+    for (int k = 0; k < 6; k++) {
       s += "<option value=\"" + String(k) + "\"" +
            ((int)r.mode == k ? " selected" : "") + ">" + modeNames[k] +
            "</option>";
@@ -352,39 +460,53 @@ static String relaysCard() {
     s += checkbox(p + "_al", "Active low", r.activeLow,
                   "Enable if your relay/SSR board switches ON when the pin is "
                   "LOW (common for blue relay boards).");
-    s += checkbox(p + "_man", "Manual: start ON", r.manualState,
-                  "For Manual mode: the output's state at power-on.");
-    s += "<div class=\"row\"><div>" +
-         textField(p + "_ton", "Timer ON (s)", String(r.timerOnSec), "number",
-                   "", "Timer mode: seconds the output stays ON each cycle.") +
-         "</div><div>" +
-         textField(p + "_toff", "Timer OFF (s)", String(r.timerOffSec),
-                   "number", "",
-                   "Timer mode: seconds the output stays OFF each cycle.") +
-         "</div></div>";
-    s += "<label>Sensor source" +
-         info("Sensor-threshold mode: which reading drives this output.") +
-         "</label><select name=\"" + p + "_src\">" + sourceOptions(r.src) +
-         "</select>";
-    s += "<label>Comparator" +
-         info("Whether the output turns ON above or below the level.") +
-         "</label><select name=\"" + p + "_cmp\">"
-         "<option value=\"0\"" + String(r.cmp == 0 ? " selected" : "") +
-         ">ON when above level</option><option value=\"1\"" +
-         String(r.cmp == 1 ? " selected" : "") +
-         ">ON when below level</option></select>";
-    s += "<div class=\"row\"><div>" +
-         textField(p + "_lvl", "Level", String(r.level), "number",
-                   "step=\"any\"",
-                   "Threshold value, in the source sensor's unit.") +
-         "</div><div>" +
-         textField(p + "_hyst", "Hysteresis", String(r.hyst), "number",
-                   "step=\"any\"",
-                   "Dead-band around the level to stop rapid on/off chatter, "
-                   "e.g. ON at 28°, OFF at 26° = level 27, hysteresis 1.") +
-         "</div></div>";
+
+    // Manual mode
+    s += modeSec(n, RELAY_MANUAL, r.mode,
+                 checkbox(p + "_man", "Start ON at power-up", r.manualState,
+                          "The output's state right after boot."));
+
+    // Cyclic timer mode
+    String timer =
+        "<div class=\"row\"><div>" +
+        textField(p + "_ton", "ON for (s)", String(r.timerOnSec), "number", "",
+                  "Seconds the output stays ON each cycle.") +
+        "</div><div>" +
+        textField(p + "_toff", "OFF for (s)", String(r.timerOffSec), "number",
+                  "", "Seconds the output stays OFF each cycle.") +
+        "</div></div>";
+    s += modeSec(n, RELAY_TIMER, r.mode, timer);
+
+    // Sensor-threshold mode
+    String sensor =
+        "<label>Sensor source" +
+        info("Which reading drives this output.") + "</label><select name=\"" +
+        p + "_src\">" + sourceOptions(r.src) + "</select>";
+    sensor += "<label>Comparator" +
+              info("Whether the output turns ON above or below the level.") +
+              "</label><select name=\"" + p + "_cmp\">"
+              "<option value=\"0\"" + String(r.cmp == 0 ? " selected" : "") +
+              ">ON when above level</option><option value=\"1\"" +
+              String(r.cmp == 1 ? " selected" : "") +
+              ">ON when below level</option></select>";
+    sensor += "<div class=\"row\"><div>" +
+              textField(p + "_lvl", "Level", String(r.level), "number",
+                        "step=\"any\"",
+                        "Threshold value, in the source sensor's unit.") +
+              "</div><div>" +
+              textField(p + "_hyst", "Hysteresis", String(r.hyst), "number",
+                        "step=\"any\"",
+                        "Dead-band around the level to stop rapid on/off "
+                        "chatter, e.g. ON at 28°, OFF at 26° = level 27, "
+                        "hysteresis 1.") +
+              "</div></div>";
+    s += modeSec(n, RELAY_SENSOR, r.mode, sensor);
+
+    // Clock-schedule mode
+    s += modeSec(n, RELAY_SCHEDULE, r.mode, scheduleSlots(p, r));
+
     s += checkbox(p + "_mqtt",
-                  "Allow MQTT control (.../relay/" + String(i + 1) + "/set)",
+                  "Allow MQTT control (.../relay/" + String(n) + "/set)",
                   r.allowMqtt,
                   "Let an MQTT ON/OFF/TOGGLE message switch this output. In "
                   "Home Assistant it then appears as a switch (else read-only).");
@@ -393,6 +515,36 @@ static String relaysCard() {
   s += "<button type=\"submit\">Save relays</button>"
        "<p class=\"muted\">Saving reboots to apply pin changes.</p>"
        "</form></div>";
+  return s;
+}
+
+static String timeCard() {
+  const TimeConfig& t = config.timecfg;
+  String s = "<div class=\"card\"><h2>Time &amp; timezone</h2>"
+             "<form method=\"POST\" action=\"/time\">";
+  s += checkbox("tm_en", "Sync time via NTP", t.enabled,
+                "Fetch the current time from the internet once the repeater "
+                "is connected to your WiFi. Needed for clock-schedule relays.");
+  s += textField("tm_srv", "NTP server", t.server, "text", "",
+                 "Time server to query. The default pool.ntp.org is fine for "
+                 "almost everyone.");
+  s += "<label for=\"tm_tz\">Timezone" +
+       info("Local timezone for the clock and relay schedules. Daylight "
+            "saving is handled automatically.") +
+       "</label><select id=\"tm_tz\" name=\"tm_tz\">";
+  bool matched = false;
+  for (auto& z : kTimezones) {
+    bool sel = !matched && strcmp(t.tz, z.tz) == 0;
+    if (sel) matched = true;
+    s += "<option value=\"" + esc(z.tz) + "\"" + (sel ? " selected" : "") +
+         ">" + z.name + "</option>";
+  }
+  s += "</select>";
+  s += "<p class=\"muted\">Current device time: " +
+       (TimeKeeper::synced() ? TimeKeeper::fmtNow() : String("not synced")) +
+       "</p>";
+  s += "<button type=\"submit\">Save time settings</button>"
+       "<p class=\"muted\">Saving reboots.</p></form></div>";
   return s;
 }
 
@@ -409,18 +561,14 @@ static String dangerCard() {
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
-static void sendPage(const String& body) {
-  String page = FPSTR(PAGE_HEAD);
-  page += body;
-  page += FPSTR(PAGE_FOOT);
-  server.send(200, "text/html", page);
-}
-
-static void sendRebootNotice(const String& msg) {
+// "anchor" is the tab to return to after the reboot (e.g. "relays").
+static void sendRebootNotice(const String& msg, const String& anchor = "") {
+  String url = anchor.length() ? ("/#" + anchor) : "/";
   String html = FPSTR(PAGE_HEAD);
   html += "<div class=\"card\"><h2>Saved</h2><p>" + msg +
           "</p><p class=\"muted\">Rebooting&hellip; rejoin the AP and this page "
-          "reloads.</p><meta http-equiv=\"refresh\" content=\"6;url=/\"></div>";
+          "reloads.</p><meta http-equiv=\"refresh\" content=\"6;url=" + url +
+          "\"></div>";
   html += FPSTR(PAGE_FOOT);
   server.send(200, "text/html", html);
   delay(400);
@@ -430,16 +578,26 @@ static void sendRebootNotice(const String& msg) {
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
+// The full page is large; stream it card by card to keep peak heap low.
 static void handleRoot() {
-  String body = warningBanner();
-  body += statusCard();
-  body += wifiCard();
-  body += apCard();
-  body += mqttCard();
-  body += sensorsCard();
-  body += relaysCard();
-  body += dangerCard();
-  sendPage(body);
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  server.sendContent_P(PAGE_HEAD);
+  server.sendContent(appShell());
+  server.sendContent("<section class=\"tab\" id=\"tab-home\">" +
+                     warningBanner() + statusCard() + "</section>");
+  server.sendContent("<section class=\"tab\" id=\"tab-network\">" +
+                     wifiCard() + apCard() + "</section>");
+  server.sendContent("<section class=\"tab\" id=\"tab-mqtt\">" + mqttCard() +
+                     "</section>");
+  server.sendContent("<section class=\"tab\" id=\"tab-sensors\">" +
+                     sensorsCard() + "</section>");
+  server.sendContent("<section class=\"tab\" id=\"tab-relays\">" +
+                     relaysCard() + "</section>");
+  server.sendContent("<section class=\"tab\" id=\"tab-system\">" + timeCard() +
+                     dangerCard() + "</section>");
+  server.sendContent_P(PAGE_FOOT);
+  server.sendContent("");  // terminate chunked response
 }
 
 static void handleSaveWifi() {
@@ -471,7 +629,8 @@ static void handleApConfig() {
     return;
   }
   Net::saveApCreds(ssid, pass);
-  sendRebootNotice("Access point updated to <b>" + esc(ssid) + "</b>.");
+  sendRebootNotice("Access point updated to <b>" + esc(ssid) + "</b>.",
+                   "network");
 }
 
 static void handleMqtt() {
@@ -491,7 +650,7 @@ static void handleMqtt() {
   if (m.haPrefix[0] == '\0')
     strlcpy(m.haPrefix, "homeassistant", sizeof(m.haPrefix));
   config.save();
-  sendRebootNotice("MQTT settings saved.");
+  sendRebootNotice("MQTT settings saved.", "mqtt");
 }
 
 static void handleSensors() {
@@ -522,7 +681,7 @@ static void handleSensors() {
   config.button.activeLow = server.hasArg("btn_al");
 
   config.save();
-  sendRebootNotice("Sensor settings saved.");
+  sendRebootNotice("Sensor settings saved.", "sensors");
 }
 
 static void handleRelays() {
@@ -540,9 +699,33 @@ static void handleRelays() {
     r.level = server.arg(p + "_lvl").toFloat();
     r.hyst = server.arg(p + "_hyst").toFloat();
     r.allowMqtt = server.hasArg(p + "_mqtt");
+    for (int k = 0; k < kSlotsPerRelay; k++) {
+      String sp = p + "_s" + String(k);
+      ScheduleSlot& sl = r.sched[k];
+      sl.enabled = server.hasArg(sp + "_en");
+      sl.onMin   = parseHHMM(server.arg(sp + "_on"));
+      sl.offMin  = parseHHMM(server.arg(sp + "_off"));
+      uint8_t days = 0;
+      for (int d = 0; d < 7; d++) {
+        if (server.hasArg(sp + "_d" + String(d))) days |= (1 << d);
+      }
+      sl.days = days;
+    }
   }
   config.save();
-  sendRebootNotice("Relay settings saved.");
+  sendRebootNotice("Relay settings saved.", "relays");
+}
+
+static void handleTime() {
+  TimeConfig& t = config.timecfg;
+  t.enabled = server.hasArg("tm_en");
+  strlcpy(t.server, server.arg("tm_srv").c_str(), sizeof(t.server));
+  if (t.server[0] == '\0') strlcpy(t.server, "pool.ntp.org", sizeof(t.server));
+  strlcpy(t.tz, server.arg("tm_tz").c_str(), sizeof(t.tz));
+  if (t.tz[0] == '\0')
+    strlcpy(t.tz, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof(t.tz));
+  config.save();
+  sendRebootNotice("Time settings saved.", "system");
 }
 
 static void handleFactoryReset() {
@@ -571,6 +754,7 @@ static void handleReadings() {
     first = false;
   };
 
+  add("Time", TimeKeeper::synced() ? TimeKeeper::fmtNow() : "not synced");
   if (r.bmeOk) {
     add("BME temp", fmt(r.temp) + " " + config.bme280.tempUnit);
     add("BME humidity", fmt(r.hum) + " %");
@@ -619,6 +803,7 @@ void begin() {
   server.on("/mqtt", HTTP_POST, handleMqtt);
   server.on("/sensors", HTTP_POST, handleSensors);
   server.on("/relays", HTTP_POST, handleRelays);
+  server.on("/time", HTTP_POST, handleTime);
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
   server.on("/readings", handleReadings);
   server.on("/raw", handleRaw);

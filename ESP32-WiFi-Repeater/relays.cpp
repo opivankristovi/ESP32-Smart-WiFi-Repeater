@@ -1,5 +1,6 @@
 #include "relays.h"
 #include "sensors.h"
+#include "timekeeper.h"
 
 namespace Relays {
 
@@ -80,6 +81,29 @@ static bool evalSensor(int idx, bool prev) {
   return prev;  // inside hysteresis band -> hold
 }
 
+// Clock-schedule mode: ON while local time is inside any enabled slot.
+// Stays OFF until NTP has set the clock. Slots with offMin <= onMin wrap
+// past midnight and belong to the day they start on.
+static bool evalSchedule(int idx) {
+  struct tm t;
+  if (!TimeKeeper::localNow(t)) return false;
+  int day  = (t.tm_wday + 6) % 7;        // tm_wday 0=Sun -> 0=Mon..6=Sun
+  int prev = (day + 6) % 7;
+  uint16_t m = t.tm_hour * 60 + t.tm_min;
+
+  for (int k = 0; k < kSlotsPerRelay; k++) {
+    const ScheduleSlot& s = config.relays[idx].sched[k];
+    if (!s.enabled) continue;
+    if (s.onMin < s.offMin) {
+      if ((s.days & (1 << day)) && m >= s.onMin && m < s.offMin) return true;
+    } else {
+      if ((s.days & (1 << day)) && m >= s.onMin) return true;
+      if ((s.days & (1 << prev)) && m < s.offMin) return true;
+    }
+  }
+  return false;
+}
+
 void update() {
   bool press = buttonPressed();
 
@@ -106,6 +130,9 @@ void update() {
         break;
       case RELAY_BUTTON:
         if (press) desired = !state[i];  // toggle on press
+        break;
+      case RELAY_SCHEDULE:
+        desired = evalSchedule(i);
         break;
     }
     apply(i, desired);

@@ -18,6 +18,7 @@
 
 #include "config.h"
 #include "net.h"
+#include "timekeeper.h"
 #include "sensors.h"
 #include "relays.h"
 #include "mqtt.h"
@@ -30,6 +31,7 @@ void setup() {
   delay(200);
 
   config.load();      // settings from NVS (defaults if first boot)
+  TimeKeeper::begin();// apply timezone (SNTP starts once upstream is up)
   Net::begin();       // AP + STA + NAPT + captive DNS
   Sensors::begin();   // init enabled sensor buses
   Relays::begin();    // configure relay pins + initial state
@@ -39,6 +41,7 @@ void setup() {
 
 void loop() {
   Net::loop();         // DNS pump + upstream reconnect watchdog + NAPT
+  TimeKeeper::loop();  // start NTP sync once the upstream link is up
   WebPortal::handle(); // serve the setup portal
   Sensors::tick();     // non-blocking DS18B20 conversion
   Relays::update();    // evaluate relay rules every tick

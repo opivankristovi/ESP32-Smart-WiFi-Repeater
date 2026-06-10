@@ -39,6 +39,11 @@ static String toJson() {
   m["ha"]   = config.mqtt.haDiscovery;
   m["hap"]  = config.mqtt.haPrefix;
 
+  JsonObject t = doc["time"].to<JsonObject>();
+  t["en"]  = config.timecfg.enabled;
+  t["srv"] = config.timecfg.server;
+  t["tz"]  = config.timecfg.tz;
+
   JsonObject b = doc["bme"].to<JsonObject>();
   b["en"]   = config.bme280.enabled;
   b["addr"] = config.bme280.address;
@@ -83,6 +88,14 @@ static String toJson() {
     r["lvl"]   = rc.level;
     r["hyst"]  = rc.hyst;
     r["mqtt"]  = rc.allowMqtt;
+    JsonArray sl = r["sl"].to<JsonArray>();
+    for (int k = 0; k < kSlotsPerRelay; k++) {
+      JsonObject s = sl.add<JsonObject>();
+      s["en"]  = rc.sched[k].enabled;
+      s["on"]  = rc.sched[k].onMin;
+      s["off"] = rc.sched[k].offMin;
+      s["d"]   = rc.sched[k].days;
+    }
   }
 
   String out;
@@ -109,6 +122,15 @@ static void fromJson(const String& json) {
     config.mqtt.haDiscovery        = m["ha"] | true;
     copyStr(config.mqtt.haPrefix, sizeof(config.mqtt.haPrefix),
             m["hap"] | "homeassistant");
+  }
+
+  JsonObjectConst t = doc["time"];
+  if (t) {
+    config.timecfg.enabled = t["en"] | true;
+    copyStr(config.timecfg.server, sizeof(config.timecfg.server),
+            t["srv"] | "pool.ntp.org");
+    copyStr(config.timecfg.tz, sizeof(config.timecfg.tz),
+            t["tz"] | "CET-1CEST,M3.5.0,M10.5.0/3");
   }
 
   JsonObjectConst b = doc["bme"];
@@ -168,6 +190,18 @@ static void fromJson(const String& json) {
       rc.level       = r["lvl"] | 0.0f;
       rc.hyst        = r["hyst"] | 0.0f;
       rc.allowMqtt   = r["mqtt"] | true;
+      JsonArrayConst sl = r["sl"];
+      if (sl) {
+        int k = 0;
+        for (JsonObjectConst s : sl) {
+          if (k >= kSlotsPerRelay) break;
+          rc.sched[k].enabled = s["en"] | false;
+          rc.sched[k].onMin   = s["on"] | 480;
+          rc.sched[k].offMin  = s["off"] | 1320;
+          rc.sched[k].days    = s["d"] | 0x7F;
+          k++;
+        }
+      }
       i++;
     }
   }

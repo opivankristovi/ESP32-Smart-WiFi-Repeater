@@ -30,7 +30,8 @@ enum MetricSource {
 enum AnalogScale { ANALOG_RAW = 0, ANALOG_PERCENT = 1, ANALOG_VOLTAGE = 2 };
 
 enum RelayMode {
-  RELAY_OFF = 0, RELAY_MANUAL, RELAY_TIMER, RELAY_SENSOR, RELAY_BUTTON
+  RELAY_OFF = 0, RELAY_MANUAL, RELAY_TIMER, RELAY_SENSOR, RELAY_BUTTON,
+  RELAY_SCHEDULE  // clock-based on/off slots (needs NTP-synced time)
 };
 
 // Optional low/high trip points for a single metric.
@@ -69,6 +70,17 @@ struct ButtonConfig {
   bool activeLow = true;           // pressed = LOW (INPUT_PULLUP)
 };
 
+// One clock-schedule entry. Spans where offMin <= onMin wrap past midnight
+// and belong to the day they start on.
+struct ScheduleSlot {
+  bool     enabled = false;
+  uint16_t onMin   = 480;    // minutes since midnight (08:00)
+  uint16_t offMin  = 1320;   // 22:00
+  uint8_t  days    = 0x7F;   // bit0 = Mon ... bit6 = Sun
+};
+
+static const int kSlotsPerRelay = 4;
+
 struct RelayConfig {
   char        name[24]    = "relay";
   RelayMode   mode        = RELAY_OFF;
@@ -81,6 +93,15 @@ struct RelayConfig {
   float       level       = 0.0f;
   float       hyst        = 0.0f;   // hysteresis band around level
   bool        allowMqtt   = true;   // accept .../relay/N/set commands
+  ScheduleSlot sched[kSlotsPerRelay];
+};
+
+// NTP / timezone settings. tz holds a POSIX TZ string (DST rules included);
+// the portal picks it from a dropdown of common zones.
+struct TimeConfig {
+  bool enabled    = true;
+  char server[48] = "pool.ntp.org";
+  char tz[48]     = "CET-1CEST,M3.5.0,M10.5.0/3";  // Brussels / central Europe
 };
 
 struct MqttConfig {
@@ -103,6 +124,7 @@ struct MqttConfig {
 // ---------------------------------------------------------------------------
 struct Config {
   MqttConfig    mqtt;
+  TimeConfig    timecfg;
   Bme280Config  bme280;
   Ds18b20Config ds18b20;
   AnalogConfig  analog[2];
