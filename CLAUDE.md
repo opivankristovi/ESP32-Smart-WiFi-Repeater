@@ -27,19 +27,20 @@ There is no test suite, no build script, and no package manifest. This is firmwa
 | `net` | `Net::` | AP+STA, NAPT (the repeating), reconnect watchdog, captive DNS |
 | `timekeeper` | `TimeKeeper::` | SNTP time sync (started once the STA link is up) + POSIX timezone from config; gates the clock-schedule relay mode. Named "TimeKeeper" to avoid clashing with libc `<time.h>` |
 | `sensors` | `Sensors::`, `Readings` | Init buses for the selected I2C chip (BME280/BMP280/BMP180) + probe (DS18B20 async, or DHT11/DHT22 synchronous), sample + threshold eval. `metricValue()` maps a `MetricSource` to the cached snapshot |
+| `inputs` | `Inputs::` | Two inputs on `PIN_INPUT` (GPIO32/33), each a digital button or capacitive touch pad; debounced centrally. `edge(i)` drives `RELAY_BUTTON` mode (input N → relay N), `getState/consumeChanged` feed the MQTT binary_sensor, `touchRaw(i)` backs the portal's live value |
 | `relays` | `Relays::` | Two outputs driven by timer/sensor/button/clock-schedule rules + MQTT override |
 | `mqtt` | `Mqtt::` | PubSubClient over the STA link; publish readings/alerts/relay state, subscribe to relay commands, HA discovery |
 | `web_portal` | `WebPortal::` | HTTP server: tabbed setup page (Home/Network/MQTT/Sensors/Relays/System, streamed card-by-card to keep peak heap low), all config form handlers, live-readings JSON, captive redirects, factory reset |
 | `web_page.h` | — | The HTML/CSS page shell (PROGMEM strings) |
 
-Data flows one direction through `loop()`: sensors are sampled into a `Readings` snapshot, which `Relays::update()` consults (via `Sensors::metricValue`) and `Mqtt::publishReadings()` ships. Relay state changes are drained each loop with `Relays::consumeChanged(i)` and published immediately.
+Data flows one direction through `loop()`: sensors are sampled into a `Readings` snapshot, which `Relays::update()` consults (via `Sensors::metricValue`) and `Mqtt::publishReadings()` ships. `Inputs::update()` runs **before** `Relays::update()` so a press registers on the same tick (`RELAY_BUTTON` reads `Inputs::edge(i)`). Relay and input state changes are drained each loop with `Relays::consumeChanged(i)` / `Inputs::consumeChanged(i)` and published immediately.
 
 ### Two-namespace persistence split (important)
 
 Settings live in **two separate NVS (`Preferences`) namespaces**, and this separation is deliberate:
 
 - **`"repeater"`** — Wi-Fi/AP credentials only (`sta_ssid`, `sta_pass`, `ap_ssid`, `ap_pass`, `pw_changed`). Owned entirely by `net.cpp`; stored as discrete keys. This is "Phase 1" config the device needs just to come up and serve the portal.
-- **`"settings"`** — everything else (MQTT, time/NTP, sensors, relays, button), serialized as **one JSON blob** under key `"json"` via ArduinoJson. Owned by `config.cpp` (`toJson`/`fromJson`).
+- **`"settings"`** — everything else (MQTT, time/NTP, sensors, inputs, relays), serialized as **one JSON blob** under key `"json"` via ArduinoJson. Owned by `config.cpp` (`toJson`/`fromJson`).
 
 `Config` does **not** hold Wi-Fi credentials. `Config::factoryReset()` clears **both** namespaces and reboots.
 
@@ -55,11 +56,12 @@ The web portal applies most config changes by **rebooting**. `handleMqtt`/`handl
 
 - **Analog pins must be ADC1 (GPIO 32–39).** ADC2 pins read garbage while Wi-Fi is active. Defaults are GPIO 34/35 (input-only). The fixed pin map is `config.h` (`PIN_*`).
 - **DS18B20 conversion is slow**, so it's driven asynchronously via `Sensors::tick()` in the main loop — never block on it.
+- **Touch inputs use `PIN_INPUT` = GPIO32/33** (touch channels T9/T8). Touch is independent of the ADC, so `touchRead()` works while Wi-Fi is active (unlike ADC2). On the classic ESP32 the reading **drops when touched** → "pressed" = `touchRead(pin) < touchThresh`. GPIO25 (the old button pin) is not touch-capable and is no longer used.
 - **NAPT must actually come up** for the repeater function; `net.cpp` re-enables it whenever the STA link transitions to connected. Serial prints "NAPT enabled" on success.
 
 ## MQTT topic tree
 
-Base is `<baseTopic>/<clientId>` (clientId defaults to `esp32-<chipid>` via `ensureClientId()`). Sensor topics are **type-neutral**: `.../sensor/i2c/{temperature,pressure,humidity}` and `.../sensor/probe/{temperature,humidity}` (humidity only when the selected chip provides it), plus `.../sensor/analog{1,2}`. Also publishes `.../status` (retained LWT online/offline), `.../diag/{rssi,uptime,heap}`, `.../alert/<metric>`, `.../relay/<1|2>/state` (retained). Subscribes: `.../relay/<1|2>/set` (`ON`/`OFF`/`TOGGLE`, gated by each relay's `allowMqtt`). HA discovery publishes retained config under `haPrefix` (default `homeassistant`) with entity **names** reflecting the selected chip and stable type-neutral keys (`i2c_*`, `probe_*`); disabling a channel (or a chip that lacks humidity) publishes an empty config to remove its entity, and the old `bme_*`/`ds_temp` keys are cleaned up on connect.
+Base is `<baseTopic>/<clientId>` (clientId defaults to `esp32-<chipid>` via `ensureClientId()`). Sensor topics are **type-neutral**: `.../sensor/i2c/{temperature,pressure,humidity}` and `.../sensor/probe/{temperature,humidity}` (humidity only when the selected chip provides it), plus `.../sensor/analog{1,2}`. Also publishes `.../status` (retained LWT online/offline), `.../diag/{rssi,uptime,heap}`, `.../alert/<metric>`, `.../input/<1|2>/state` (retained `ON`/`OFF`, advertised as an HA binary_sensor), `.../relay/<1|2>/state` (retained). Subscribes: `.../relay/<1|2>/set` (`ON`/`OFF`/`TOGGLE`, gated by each relay's `allowMqtt`). HA discovery publishes retained config under `haPrefix` (default `homeassistant`) with entity **names** reflecting the selected chip and stable type-neutral keys (`i2c_*`, `probe_*`); disabling a channel (or a chip that lacks humidity) publishes an empty config to remove its entity, and the old `bme_*`/`ds_temp` keys are cleaned up on connect.
 
 ## Conventions
 
