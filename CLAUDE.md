@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single Arduino sketch for the **ESP32** that turns the board into a **true NAT Wi-Fi repeater** (concurrent AP+STA with NAPT, so AP clients route out to the upstream internet) plus an IoT edge node: reads BME280 / DS18B20 / 2× analog sensors, drives two relay/SSR outputs from local rules (timer, sensor threshold, button, NTP clock schedules), publishes to MQTT, and auto-registers in Home Assistant. Everything is configured at runtime through a captive-portal web page — **nothing is hard-coded and no re-flashing is needed to change settings.**
+A single Arduino sketch for the **ESP32** that turns the board into a **true NAT Wi-Fi repeater** (concurrent AP+STA with NAPT, so AP clients route out to the upstream internet) plus an IoT edge node: reads a selectable I2C sensor (BME280 / BMP280 / BMP180), a selectable GPIO4 temperature probe (1-wire DS18B20 or single-wire DHT11/DHT22) and 2× analog sensors, drives two relay/SSR outputs from local rules (timer, sensor threshold, button, NTP clock schedules), publishes to MQTT, and auto-registers in Home Assistant. Everything is configured at runtime through a captive-portal web page — **nothing is hard-coded and no re-flashing is needed to change settings.**
 
 There is no test suite, no build script, and no package manifest. This is firmware compiled and flashed from the Arduino IDE.
 
@@ -12,7 +12,7 @@ There is no test suite, no build script, and no package manifest. This is firmwa
 
 - **Toolchain:** Arduino IDE with the ESP32 board package. Target e.g. *ESP32 Dev Module*.
 - **Open** `ESP32-WiFi-Repeater/ESP32-WiFi-Repeater.ino` — all `.h`/`.cpp` files plus `web_page.h` must stay in that one sketch folder; the IDE compiles them together as module "tabs".
-- **Required libraries** (Arduino Library Manager): PubSubClient, Adafruit BME280, Adafruit Unified Sensor, OneWire, DallasTemperature, **ArduinoJson v7** (v6 will not compile — uses `JsonDocument`). `WiFi`, `WebServer`, `DNSServer`, `Preferences`, `Wire` ship with the core.
+- **Required libraries** (Arduino Library Manager): PubSubClient, Adafruit BME280, **Adafruit BMP280 Library**, **Adafruit BMP085 Library** (covers the register-compatible BMP180), **DHT sensor library** (Adafruit, for DHT11/DHT22), Adafruit Unified Sensor, OneWire, DallasTemperature, **ArduinoJson v7** (v6 will not compile — uses `JsonDocument`). `WiFi`, `WebServer`, `DNSServer`, `Preferences`, `Wire` ship with the core.
 - **Serial monitor:** 115200 baud.
 - **Compiles on both Arduino-ESP32 core 2.x and 3.x** — the NAPT API differs between them and is `#if ESP_ARDUINO_VERSION_MAJOR`-switched in `net.cpp`. Any networking change must preserve both branches.
 - **First-run access:** join Wi-Fi `ESP32-repeaterAP` / `12345678`, captive portal pops up (or browse `http://192.168.4.1`).
@@ -26,7 +26,7 @@ There is no test suite, no build script, and no package manifest. This is firmwa
 | `config` | `Config config` (global) | All settings structs + NVS persistence + factory reset |
 | `net` | `Net::` | AP+STA, NAPT (the repeating), reconnect watchdog, captive DNS |
 | `timekeeper` | `TimeKeeper::` | SNTP time sync (started once the STA link is up) + POSIX timezone from config; gates the clock-schedule relay mode. Named "TimeKeeper" to avoid clashing with libc `<time.h>` |
-| `sensors` | `Sensors::`, `Readings` | Init buses, non-blocking DS18B20 conversion, sample + threshold eval |
+| `sensors` | `Sensors::`, `Readings` | Init buses for the selected I2C chip (BME280/BMP280/BMP180) + probe (DS18B20 async, or DHT11/DHT22 synchronous), sample + threshold eval. `metricValue()` maps a `MetricSource` to the cached snapshot |
 | `relays` | `Relays::` | Two outputs driven by timer/sensor/button/clock-schedule rules + MQTT override |
 | `mqtt` | `Mqtt::` | PubSubClient over the STA link; publish readings/alerts/relay state, subscribe to relay commands, HA discovery |
 | `web_portal` | `WebPortal::` | HTTP server: tabbed setup page (Home/Network/MQTT/Sensors/Relays/System, streamed card-by-card to keep peak heap low), all config form handlers, live-readings JSON, captive redirects, factory reset |
@@ -43,7 +43,9 @@ Settings live in **two separate NVS (`Preferences`) namespaces**, and this separ
 
 `Config` does **not** hold Wi-Fi credentials. `Config::factoryReset()` clears **both** namespaces and reboots.
 
-When extending the JSON config: add the field to the struct in `config.h`, then to **both** `toJson` (serialize) and `fromJson` (deserialize, always with a `| default` fallback so old/absent blobs still load), and surface it in the relevant `web_portal.cpp` form + save handler.
+When extending the JSON config: add the field to the struct in `config.h`, then to **both** `toJson` (serialize) and `fromJson` (deserialize, always with a `| default` fallback so old/absent blobs still load), and surface it in the relevant `web_portal.cpp` form + save handler. The I2C sensor (`config.i2c`, JSON key `"bme"`) and probe (`config.probe`, JSON key `"ds"`) keep their **legacy JSON keys** for storage stability even though the C++ members were renamed; each carries a `type` enum (`I2cType` / `ProbeType`).
+
+`MetricSource` integer values are **persisted** in the relay config blob — only **append** new sources at the end, never reorder or reuse a value (e.g. `SRC_PROBE_HUM = 7` was appended).
 
 ### Reboot-on-save model
 
@@ -57,7 +59,7 @@ The web portal applies most config changes by **rebooting**. `handleMqtt`/`handl
 
 ## MQTT topic tree
 
-Base is `<baseTopic>/<clientId>` (clientId defaults to `esp32-<chipid>` via `ensureClientId()`). Publishes: `.../status` (retained LWT online/offline), `.../sensor/<...>`, `.../diag/{rssi,uptime,heap}`, `.../alert/<metric>`, `.../relay/<1|2>/state` (retained). Subscribes: `.../relay/<1|2>/set` (`ON`/`OFF`/`TOGGLE`, gated by each relay's `allowMqtt`). HA discovery publishes retained config under `haPrefix` (default `homeassistant`); disabling a channel publishes an empty config to remove its entity.
+Base is `<baseTopic>/<clientId>` (clientId defaults to `esp32-<chipid>` via `ensureClientId()`). Sensor topics are **type-neutral**: `.../sensor/i2c/{temperature,pressure,humidity}` and `.../sensor/probe/{temperature,humidity}` (humidity only when the selected chip provides it), plus `.../sensor/analog{1,2}`. Also publishes `.../status` (retained LWT online/offline), `.../diag/{rssi,uptime,heap}`, `.../alert/<metric>`, `.../relay/<1|2>/state` (retained). Subscribes: `.../relay/<1|2>/set` (`ON`/`OFF`/`TOGGLE`, gated by each relay's `allowMqtt`). HA discovery publishes retained config under `haPrefix` (default `homeassistant`) with entity **names** reflecting the selected chip and stable type-neutral keys (`i2c_*`, `probe_*`); disabling a channel (or a chip that lacks humidity) publishes an empty config to remove its entity, and the old `bme_*`/`ds_temp` keys are cleaned up on connect.
 
 ## Conventions
 
