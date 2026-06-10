@@ -22,6 +22,7 @@ A single ESP32 sketch that turns the board into a **true NAT Wi-Fi repeater** (d
 - 🔒 **Safe by default** — ships as `ESP32-repeaterAP` / `12345678` and nags you (on-page) until you change the default password.
 - 🌡️ **Sensors** — selectable I2C chip (BME280 / BMP280 / BMP180), a temperature probe (1-wire DS18B20 *or* single-wire DHT11/DHT22 with humidity), and 2× analog inputs with raw/percent/voltage scaling and one-click calibration.
 - 🎛️ **Tidy setup page** — each I/O block collapses when it's disabled and shows only the settings relevant to the selected chip.
+- 👆 **Two touch/button inputs** — each pin is a digital button **or** a capacitive touch pad (live value + threshold shown on the page); they toggle the relays *and* publish to MQTT/Home Assistant to switch other devices.
 - 🚨 **Alerts** — per-reading low/high thresholds published to MQTT.
 - 🔌 **Relays** — two outputs driven by timer, sensor threshold (with hysteresis), a push button, clock schedules, or MQTT.
 - ⏰ **Clock schedules** — NTP-synced time (timezone + DST aware); each relay can follow up to 4 weekly ON/OFF slots.
@@ -135,7 +136,7 @@ The sensor/relay channels use fixed, preconfigured GPIOs. Each channel is enable
 | I2C sensor (BME280 / BMP280 / BMP180) | SDA = 21, SCL = 22  | BME280/BMP280 address 0x76 or 0x77 (selectable); BMP180 fixed 0x77 |
 | Temp probe (DS18B20 *or* DHT11/DHT22) | GPIO 4              | 4.7 kΩ pull-up from data to 3V3 |
 | Analog input 1 / 2   | GPIO 34 / GPIO 35   | e.g. LDR. **ADC1 only** — see note |
-| Button input         | GPIO 25             | Wired to GND, uses internal pull-up (active-low) |
+| Touch / button input 1 / 2 | GPIO 32 / GPIO 33 | Each selectable as a digital button **or** a capacitive touch pad (T9 / T8) |
 | Relay / SSR 1 / 2    | GPIO 26 / GPIO 27   | Active-high or active-low (selectable) |
 
 > ⚠️ **Analog pins must be on ADC1 (GPIO 32–39).** The ESP32's ADC2 pins do **not** work while Wi-Fi is active, so the repeater can only sample analog sensors on ADC1. GPIO 34/35 are input-only — ideal for sensor inputs.
@@ -150,7 +151,10 @@ Everything runs at **3.3 V** (the ESP32 is **not** 5 V-tolerant on its GPIOs). W
   - **DHT11 / DHT22 (single-wire, temp + humidity)** — `VCC → 3V3`, `GND → GND`, `DATA → GPIO 4`, same **4.7 kΩ pull-up** to 3V3. Select *single-wire* and the DHT model on the page.
 - **Analog sensor / LDR (input)** — wire as a voltage divider into **GPIO 34** (or 35):
   `3V3 ── LDR ──┬── GPIO34 ──╮` , `╰── 10 kΩ ── GND`. On the page pick *Percent* scaling and use **Set as min / Set as max** to calibrate the dark/bright ends. ⚠️ **Analog inputs must be on ADC1 (GPIO 32–39)** — ADC2 pins read garbage while Wi-Fi is on.
-- **Push button (input)** — one leg → `GPIO 25`, the other leg → `GND`. No resistor needed: the internal pull-up makes it **active-low** (pressed = LOW).
+- **Touch / button inputs 1 & 2 (GPIO 32 / 33)** — each pin works two ways, chosen per input on the Sensors tab:
+  - **Digital button** — one leg → the pin, the other → `GND`. No resistor needed: the internal pull-up makes it **active-low** (pressed = LOW).
+  - **Capacitive touch** — just run a short wire to the pin, or solder it to a small metal pad/foil; touching it is detected (no button or resistor). The portal shows a live touch value so you can pick the threshold. Touch sensing keeps working while Wi-Fi is active.
+  Each input toggles its matching relay (in *Button toggle* mode) **and** is published to MQTT / Home Assistant, so it can also switch other devices.
 - **Relay / SSR module (outputs)** — `IN1 → GPIO 26`, `IN2 → GPIO 27`, plus the board's `VCC`/`GND` (many relay boards want **5 V** on VCC while the IN pins are driven at 3.3 V — check your board). If the relay turns on when it should be off, toggle **active-low** on the page to match the board.
 
 ---
@@ -194,6 +198,7 @@ Topic tree (base = `<baseTopic>/<clientId>`):
 | `.../sensor/analog1`, `.../sensor/analog2` | publish | value |
 | `.../diag/rssi`, `.../diag/uptime`, `.../diag/heap` | publish | Wi-Fi dBm / seconds / bytes |
 | `.../alert/<metric>` | publish (on change) | `OK` / `LOW` / `HIGH` |
+| `.../input/<1\|2>/state` | publish (retained) | `ON` (pressed) / `OFF` |
 | `.../relay/<1\|2>/state` | publish (retained) | `ON` / `OFF` |
 | `.../relay/<1\|2>/set` | **subscribe** | `ON` / `OFF` / `TOGGLE` |
 
@@ -204,7 +209,7 @@ Each of the two outputs has a mode:
 - **Off / Manual** — manual is held by the page default and MQTT commands.
 - **Timer** — cyclic ON/OFF for the configured number of seconds.
 - **Sensor threshold** — switches on a chosen reading crossing a level, with a **hysteresis** band to prevent chatter (e.g. fan ON above 28 °C, OFF below 26 °C → level 27, hysteresis 1).
-- **Button** — toggled by a debounced press on GPIO 25.
+- **Button** — toggled by its matching input (relay 1 ← Input 1, relay 2 ← Input 2), each a digital button or capacitive touch on GPIO 32/33.
 - **Clock schedule** — up to **4 weekly slots** per relay, each with an ON time, an OFF time, and the weekdays it applies to. Spans past midnight are fine (e.g. 22:00 → 06:00). The relay stays OFF until the clock is NTP-synced.
 
 Set **active-low** to match your relay board, and **Allow MQTT control** to accept `.../relay/N/set` commands.
@@ -220,6 +225,7 @@ Leave **Publish MQTT discovery** enabled (default) and the device registers itse
 
 - every enabled sensor → a **sensor** entity (correct device class + unit),
 - each relay → a **switch** (or a read-only **binary_sensor** if *Allow MQTT control* is off),
+- each enabled input (touch/button) → a **binary_sensor** you can use as an automation trigger to switch other devices,
 - **diagnostics** → Wi-Fi signal, uptime, and free memory.
 
 All entities group under one HA **device** and follow the online/offline availability from the Last-Will. Disabling a channel publishes an empty config to remove its entity, keeping things tidy. Requires the HA **MQTT integration** (discovery is on by default there).
