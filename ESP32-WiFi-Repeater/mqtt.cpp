@@ -1,5 +1,6 @@
 #include "mqtt.h"
 #include "relays.h"
+#include "inputs.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -119,6 +120,22 @@ static void relayDisc(int i) {
   }
 }
 
+// Touch/button input -> read-only binary_sensor (so HA automations can react).
+static void inputDisc(int i) {
+  String key = "input" + String(i + 1);
+  if (!config.inputs[i].enabled) { removeDisc("binary_sensor", key); return; }
+  String name = config.inputs[i].name[0] ? String(config.inputs[i].name)
+                                         : ("Input " + String(i + 1));
+  JsonDocument doc;
+  doc["name"]        = name;
+  doc["unique_id"]   = String(config.mqtt.clientId) + "_" + key;
+  doc["state_topic"] = base() + "/input/" + String(i + 1) + "/state";
+  doc["payload_on"]  = "ON";
+  doc["payload_off"] = "OFF";
+  addDeviceAndAvail(doc);
+  pubDisc("binary_sensor", key, doc);
+}
+
 // Diagnostic sensor (RSSI / uptime / heap) -- HA "diagnostic" category.
 static void diagDisc(const String& key, const String& name, const String& sub,
                      const char* devClass, const String& unit) {
@@ -186,6 +203,7 @@ static void publishDiscovery() {
   }
 
   for (int i = 0; i < 2; i++) relayDisc(i);
+  for (int i = 0; i < 2; i++) inputDisc(i);
 
   diagDisc("rssi", "WiFi signal", "/diag/rssi", "signal_strength", "dBm");
   diagDisc("uptime", "Uptime", "/diag/uptime", "duration", "s");
@@ -209,8 +227,9 @@ static bool tryConnect() {
     }
   }
   if (config.mqtt.haDiscovery) publishDiscovery();
-  // Seed current relay states so HA reflects them immediately on (re)connect.
+  // Seed current relay + input states so HA reflects them on (re)connect.
   for (int i = 0; i < 2; i++) publishRelayState(i, Relays::getState(i));
+  for (int i = 0; i < 2; i++) publishInputState(i, Inputs::getState(i));
   prevInit = false;  // re-publish alert states on the next readings cycle
   Serial.println("MQTT connected");
   return true;
@@ -289,6 +308,12 @@ void publishReadings(const Readings& r) {
 void publishRelayState(int idx, bool on) {
   if (!client.connected()) return;
   String topic = base() + "/relay/" + String(idx + 1) + "/state";
+  client.publish(topic.c_str(), on ? "ON" : "OFF", true);  // retained
+}
+
+void publishInputState(int idx, bool on) {
+  if (!client.connected()) return;
+  String topic = base() + "/input/" + String(idx + 1) + "/state";
   client.publish(topic.c_str(), on ? "ON" : "OFF", true);  // retained
 }
 

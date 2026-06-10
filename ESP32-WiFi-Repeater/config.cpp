@@ -72,9 +72,15 @@ static String toJson() {
     thrToJson(a["t"].to<JsonObject>(), config.analog[i].thr);
   }
 
-  JsonObject btn = doc["btn"].to<JsonObject>();
-  btn["en"] = config.button.enabled;
-  btn["al"] = config.button.activeLow;
+  JsonArray inArr = doc["inputs"].to<JsonArray>();
+  for (int i = 0; i < 2; i++) {
+    JsonObject in = inArr.add<JsonObject>();
+    in["en"]   = config.inputs[i].enabled;
+    in["type"] = (int)config.inputs[i].type;
+    in["name"] = config.inputs[i].name;
+    in["al"]   = config.inputs[i].activeLow;
+    in["thr"]  = config.inputs[i].touchThresh;
+  }
 
   JsonArray rArr = doc["relays"].to<JsonArray>();
   for (int i = 0; i < 2; i++) {
@@ -173,10 +179,19 @@ static void fromJson(const String& json) {
     }
   }
 
-  JsonObjectConst btn = doc["btn"];
-  if (btn) {
-    config.button.enabled  = btn["en"] | false;
-    config.button.activeLow = btn["al"] | true;
+  JsonArrayConst inArr = doc["inputs"];
+  if (inArr) {
+    int i = 0;
+    for (JsonObjectConst in : inArr) {
+      if (i >= 2) break;
+      config.inputs[i].enabled = in["en"] | false;
+      config.inputs[i].type    = (InputType)(in["type"] | 0);
+      copyStr(config.inputs[i].name, sizeof(config.inputs[i].name),
+              in["name"] | "input");
+      config.inputs[i].activeLow   = in["al"] | true;
+      config.inputs[i].touchThresh = in["thr"] | 40;
+      i++;
+    }
   }
 
   JsonArrayConst rArr = doc["relays"];

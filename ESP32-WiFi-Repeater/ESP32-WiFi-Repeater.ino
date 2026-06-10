@@ -20,6 +20,7 @@
 #include "net.h"
 #include "timekeeper.h"
 #include "sensors.h"
+#include "inputs.h"
 #include "relays.h"
 #include "mqtt.h"
 #include "web_portal.h"
@@ -34,6 +35,7 @@ void setup() {
   TimeKeeper::begin();// apply timezone (SNTP starts once upstream is up)
   Net::begin();       // AP + STA + NAPT + captive DNS
   Sensors::begin();   // init enabled sensor buses
+  Inputs::begin();    // configure touch/button input pins
   Relays::begin();    // configure relay pins + initial state
   Mqtt::begin();      // configure client (connects in loop)
   WebPortal::begin(); // routes + web server
@@ -44,12 +46,18 @@ void loop() {
   TimeKeeper::loop();  // start NTP sync once the upstream link is up
   WebPortal::handle(); // serve the setup portal
   Sensors::tick();     // non-blocking DS18B20 conversion
+  Inputs::update();    // sample touch/button inputs (before relay rules)
   Relays::update();    // evaluate relay rules every tick
   Mqtt::loop();        // maintain MQTT connection
 
   // Publish relay state changes immediately (rules, button, MQTT command).
   for (int i = 0; i < 2; i++) {
     if (Relays::consumeChanged(i)) Mqtt::publishRelayState(i, Relays::getState(i));
+  }
+
+  // Publish input state changes (so HA can switch other devices off them).
+  for (int i = 0; i < 2; i++) {
+    if (Inputs::consumeChanged(i)) Mqtt::publishInputState(i, Inputs::getState(i));
   }
 
   // Periodic sensor publish.

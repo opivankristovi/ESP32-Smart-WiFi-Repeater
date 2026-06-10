@@ -4,6 +4,7 @@
 #include "net.h"
 #include "timekeeper.h"
 #include "sensors.h"
+#include "inputs.h"
 #include "relays.h"
 #include "mqtt.h"
 
@@ -430,16 +431,50 @@ static String sensorsCard() {
     s += "</div></fieldset>";  // end aN_body
   }
 
-  // Button
-  s += "<fieldset><legend>Button input (GPIO25)</legend>";
-  s += checkbox("btn_en", "Enabled", config.button.enabled,
-                "A momentary push button to GND. Set a relay's mode to "
-                "\"Button toggle\" to flip it on each press.");
-  s += "<div id=\"btn_body\">";
-  s += checkbox("btn_al", "Active low (INPUT_PULLUP)", config.button.activeLow,
-                "On (recommended): button wired between the pin and GND, using "
-                "the internal pull-up. Off: button drives the pin HIGH.");
-  s += "</div></fieldset>";  // end btn_body
+  // Inputs 1 & 2 (digital button or capacitive touch)
+  for (int i = 0; i < 2; i++) {
+    String p = "in" + String(i + 1);
+    String n = String(i + 1);
+    const InputConfig& in = config.inputs[i];
+    s += "<fieldset><legend>Input " + n + " (GPIO" + String(PIN_INPUT[i]) +
+         ")</legend>";
+    s += checkbox(p + "_en", "Enabled", in.enabled,
+                  "Drives relay " + n + " in \"Button toggle\" mode, and is "
+                  "published to MQTT / Home Assistant as a binary_sensor so it "
+                  "can switch other devices too.");
+    s += "<div id=\"" + p + "_body\">";
+    s += textField(p + "_name", "Name", in.name, "text", "",
+                   "Friendly name shown in live readings and Home Assistant "
+                   "(e.g. \"Hallway switch\").");
+    s += "<label for=\"" + p + "_type\">Type" +
+         info("Digital button = a momentary switch to GND. Capacitive touch = "
+              "a wire or pad on the pin, no button needed.") +
+         "</label><select id=\"" + p + "_type\" name=\"" + p +
+         "_type\" onchange=\"toggleInput(" + n + ")\">"
+         "<option value=\"0\"" +
+         String(in.type == INPUT_DIGITAL ? " selected" : "") +
+         ">Digital button</option><option value=\"1\"" +
+         String(in.type == INPUT_TOUCH ? " selected" : "") +
+         ">Capacitive touch</option></select>";
+    // Digital-only: active-low toggle.
+    s += "<div id=\"" + p + "_dig\">" +
+         checkbox(p + "_al", "Active low (INPUT_PULLUP)", in.activeLow,
+                  "On (recommended): button between the pin and GND using the "
+                  "internal pull-up. Off: button drives the pin HIGH.") +
+         "</div>";
+    // Touch-only: live value read-out + threshold.
+    s += "<div id=\"" + p + "_touch\">";
+    s += "<p class=\"muted\">Live touch value: <b id=\"" + p +
+         "_val\">--</b> &middot; lower = touched.</p>";
+    s += textField(p + "_thr", "Touch threshold", String(in.touchThresh),
+                   "number",
+                   "min=\"0\" max=\"1000\"",
+                   "Counts as pressed when the live value drops below this. "
+                   "Watch the value above while touching to pick a number "
+                   "between the resting and touched readings.");
+    s += "</div>";
+    s += "</div></fieldset>";  // end inN_body
+  }
 
   s += "<button type=\"submit\">Save sensors</button>"
        "<p class=\"muted\">Saving reboots to apply pin changes.</p>"
@@ -500,8 +535,9 @@ static String relaysCard() {
     s += "<label>Mode" +
          info("Off = always off. Manual = controlled by you / MQTT. "
               "Timer = cycle on/off. Sensor threshold = switch on a reading. "
-              "Button toggle = flip on each button press. Clock schedule = "
-              "on/off at set times of day (needs NTP time).") +
+              "Button toggle = flip on each press of the matching input "
+              "(relay 1 follows Input 1, relay 2 follows Input 2). "
+              "Clock schedule = on/off at set times of day (needs NTP time).") +
          "</label><select id=\"" + p + "_mode\" name=\"" + p +
          "_mode\" onchange=\"modeChanged(" + String(n) + ")\">";
     for (int k = 0; k < 6; k++) {
@@ -739,8 +775,15 @@ static void handleSensors() {
     parseThr(p + "_t", a.thr);
   }
 
-  config.button.enabled = server.hasArg("btn_en");
-  config.button.activeLow = server.hasArg("btn_al");
+  for (int i = 0; i < 2; i++) {
+    String p = "in" + String(i + 1);
+    InputConfig& in = config.inputs[i];
+    in.enabled = server.hasArg(p + "_en");
+    in.type = (InputType)server.arg(p + "_type").toInt();
+    strlcpy(in.name, server.arg(p + "_name").c_str(), sizeof(in.name));
+    in.activeLow = server.hasArg(p + "_al");
+    in.touchThresh = (uint16_t)server.arg(p + "_thr").toInt();
+  }
 
   config.save();
   sendRebootNotice("Sensor settings saved.", "sensors");
@@ -836,6 +879,13 @@ static void handleReadings() {
         fmt(r.a2, config.analog[1].scale == ANALOG_RAW ? 0 : 2) +
             aUnit[config.analog[1].scale]);
   for (int i = 0; i < 2; i++) {
+    if (!config.inputs[i].enabled) continue;
+    String label = String(config.inputs[i].name).length()
+                       ? String(config.inputs[i].name)
+                       : ("Input " + String(i + 1));
+    add(label, Inputs::getState(i) ? "pressed" : "released");
+  }
+  for (int i = 0; i < 2; i++) {
     add("Relay " + String(i + 1), Relays::getState(i) ? "ON" : "OFF");
   }
   j += "}";
@@ -851,6 +901,16 @@ static void handleRaw() {
   }
   pinMode(PIN_ANALOG[ch], INPUT);
   server.send(200, "text/plain", String(analogRead(PIN_ANALOG[ch])));
+}
+
+// Live capacitive-touch reading for an input (drives the live value read-out).
+static void handleTouch() {
+  int ch = server.arg("ch").toInt();
+  if (ch < 0 || ch > 1) {
+    server.send(400, "text/plain", "bad channel");
+    return;
+  }
+  server.send(200, "text/plain", String(Inputs::touchRaw(ch)));
 }
 
 // Captive-portal: bounce unknown hosts / OS probes to the setup page.
@@ -871,6 +931,7 @@ void begin() {
   server.on("/factoryreset", HTTP_POST, handleFactoryReset);
   server.on("/readings", handleReadings);
   server.on("/raw", handleRaw);
+  server.on("/touch", handleTouch);
   // OS connectivity-check probes -> portal.
   server.on("/generate_204", handleCaptive);
   server.on("/hotspot-detect.html", handleCaptive);
