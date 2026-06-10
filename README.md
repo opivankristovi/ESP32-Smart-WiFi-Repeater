@@ -49,9 +49,15 @@ Everything is managed from a clean, tabbed web page served by the ESP32 itself. 
 
 ![Web UI Home tab beside the auto-discovered device in Home Assistant](docs/web-ui-and-home-assistant.png)
 
-And the **Relays tab** configuring the clock-schedule mode — pick ON/OFF times and weekdays per slot:
+The **Relays tab** in action — every mode is configured in place. Below: a humidity-driven fan on a sensor threshold, a cyclic timer, the clock-schedule mode with weekly slots, and the **System tab** with the time settings that power those schedules:
 
-![Relay clock-schedule configuration with weekly slots](docs/relay-clock-schedule.png)
+| Sensor threshold | Cyclic timer |
+|:--:|:--:|
+| ![Relay in sensor-threshold mode driven by BME280 humidity](docs/relay-sensor-threshold.png) | ![Relay in cyclic timer mode](docs/relay-timer.png) |
+
+| Clock schedule | Time & timezone |
+|:--:|:--:|
+| ![Relay clock-schedule configuration with weekly slots](docs/relay-clock-schedule.png) | ![System tab with NTP, timezone and factory reset](docs/system-time-settings.png) |
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -211,6 +217,12 @@ Leave **Publish MQTT discovery** enabled (default) and the device registers itse
 - **diagnostics** → Wi-Fi signal, uptime, and free memory.
 
 All entities group under one HA **device** and follow the online/offline availability from the Last-Will. Disabling a channel publishes an empty config to remove its entity, keeping things tidy. Requires the HA **MQTT integration** (discovery is on by default there).
+
+The device appears under the MQTT integration with all its entities, ready to drop onto a dashboard:
+
+![ESP32 Repeater auto-discovered under the Home Assistant MQTT integration](docs/home-assistant-mqtt-device.png)
+
+![ESP32 Repeater entities on a Home Assistant overview dashboard](docs/home-assistant-overview.png)
 
 ---
 
