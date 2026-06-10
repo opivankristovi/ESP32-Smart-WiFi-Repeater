@@ -22,7 +22,8 @@ A single ESP32 sketch that turns the board into a **true NAT Wi-Fi repeater** (d
 - 🔒 **Safe by default** — ships as `ESP32-repeaterAP` / `12345678` and nags you (on-page) until you change the default password.
 - 🌡️ **Sensors** — BME280 (temp/humidity/pressure), DS18B20 (temp), and 2× analog inputs with raw/percent/voltage scaling and one-click calibration.
 - 🚨 **Alerts** — per-reading low/high thresholds published to MQTT.
-- 🔌 **Relays** — two outputs driven by timer, sensor threshold (with hysteresis), a push button, or MQTT.
+- 🔌 **Relays** — two outputs driven by timer, sensor threshold (with hysteresis), a push button, clock schedules, or MQTT.
+- ⏰ **Clock schedules** — NTP-synced time (timezone + DST aware); each relay can follow up to 4 weekly ON/OFF slots.
 - 📨 **MQTT** — periodic publishing with retained Last-Will availability.
 - 🏠 **Home Assistant auto-discovery** — sensors, switches, and diagnostics appear automatically, grouped as one device.
 - ♻️ **Factory reset** — recover a misconfigured unit from the web page, no cable needed.
@@ -42,9 +43,20 @@ flowchart LR
   Broker --> HA["🏠 Home Assistant"]
 ```
 
+## 📸 What it looks like
+
+Everything is managed from a clean, tabbed web page served by the ESP32 itself. Here's the **Home tab** next to the device as it appears in **Home Assistant** after MQTT auto-discovery — no YAML, it just shows up:
+
+![Web UI Home tab beside the auto-discovered device in Home Assistant](docs/web-ui-and-home-assistant.png)
+
+And the **Relays tab** configuring the clock-schedule mode — pick ON/OFF times and weekdays per slot:
+
+![Relay clock-schedule configuration with weekly slots](docs/relay-clock-schedule.png)
+
 <details>
 <summary><b>Table of contents</b></summary>
 
+- [What it looks like](#-what-it-looks-like)
 - [Quick Start](#-quick-start)
 - [Pin Map & Wiring](#-pin-map--wiring)
 - [Web Setup Walkthrough](#-web-setup-walkthrough)
@@ -133,17 +145,16 @@ Everything runs at **3.3 V** (the ESP32 is **not** 5 V-tolerant on its GPIOs). W
 
 ## 📱 Web Setup Walkthrough
 
-Everything lives on the page served at `http://192.168.4.1` (and auto-popped as a captive portal):
+Everything lives on the page served at `http://192.168.4.1` (and auto-popped as a captive portal). The app bar shows live **WiFi** and **MQTT** connection dots, and the page is organised into tabs:
 
-| Section | What it does |
-|---------|--------------|
-| **Status + live readings** | Connection state and a live view of every enabled sensor / relay (refreshes every few seconds). |
-| **Connect to a network** | Scans for upstream Wi-Fi, pick one and enter its password. |
-| **Repeater access point** | Rename the AP and set its password (clears the default-password warning). |
+| Tab | What it does |
+|-----|--------------|
+| **Home** | Status (upstream link, MQTT, clock) and a live view of every enabled sensor / relay plus the device time (refreshes every few seconds). |
+| **Network** | Scan and join the upstream Wi-Fi; rename the repeater AP and set its password (clears the default-password warning). |
 | **MQTT** | Broker host/port/credentials, base topic, client ID, publish interval, and Home Assistant discovery. |
 | **Sensors** | Enable BME280 / DS18B20 / analog inputs, choose units & scaling, set alert thresholds. |
-| **Relays** | Per-output mode (off / manual / timer / sensor / button), level + hysteresis, active-low, MQTT control. |
-| **Maintenance** | **Factory reset** — wipe all settings and reboot to defaults. |
+| **Relays** | Per-output mode (off / manual / timer / sensor / button / clock schedule), level + hysteresis, active-low, MQTT control. |
+| **System** | **Time & timezone** (NTP server + timezone with DST handling) and **factory reset** — wipe all settings and reboot to defaults. |
 
 ℹ️ Hover (or tap) the little **ⓘ** icons next to settings for inline help. Saving MQTT/sensor/relay settings reboots the device to apply pin changes — rejoin the AP and the page reloads itself.
 
@@ -182,8 +193,12 @@ Each of the two outputs has a mode:
 - **Timer** — cyclic ON/OFF for the configured number of seconds.
 - **Sensor threshold** — switches on a chosen reading crossing a level, with a **hysteresis** band to prevent chatter (e.g. fan ON above 28 °C, OFF below 26 °C → level 27, hysteresis 1).
 - **Button** — toggled by a debounced press on GPIO 25.
+- **Clock schedule** — up to **4 weekly slots** per relay, each with an ON time, an OFF time, and the weekdays it applies to. Spans past midnight are fine (e.g. 22:00 → 06:00). The relay stays OFF until the clock is NTP-synced.
 
 Set **active-low** to match your relay board, and **Allow MQTT control** to accept `.../relay/N/set` commands.
+
+### Time & NTP
+The **System tab** holds the clock settings: an NTP server (default `pool.ntp.org`) and a timezone picked from a dropdown of common zones — daylight-saving transitions are handled automatically. Time syncs as soon as the upstream link is up and is shown as a pill in the status card (and as a *Time* row in the live readings). A synced clock is required for the relays' **clock schedule** mode.
 
 ---
 
@@ -207,9 +222,9 @@ The ESP32 runs in concurrent **AP + STA** mode:
 - **AP (access point)** rebroadcasts a new network for your devices.
 - **NAPT (NAT)** routes AP-client traffic out through the upstream link — this is what makes it a *true* repeater rather than an isolated second network.
 
-Configuration is handled entirely through the captive-portal web UI and persisted in NVS (`Preferences` / `ArduinoJson`), so everything survives reboots without re-flashing. MQTT rides the upstream link and only runs when connected; the DS18B20's slow conversion is handled asynchronously so the portal stays responsive.
+Configuration is handled entirely through the captive-portal web UI and persisted in NVS (`Preferences` / `ArduinoJson`), so everything survives reboots without re-flashing. MQTT rides the upstream link and only runs when connected; the DS18B20's slow conversion is handled asynchronously so the portal stays responsive. Once the upstream link is up, **SNTP** keeps the local clock in sync in the configured timezone — that's what powers the clock-schedule relay mode and the time shown on the page.
 
-The firmware is split into focused modules (compiled together as one sketch): `config` (settings + factory reset), `net` (AP/STA/NAPT/captive DNS), `sensors`, `relays`, `mqtt`, and `web_portal` (+ `web_page.h` for the page shell). `ESP32-WiFi-Repeater.ino` is just `setup()`/`loop()` orchestration.
+The firmware is split into focused modules (compiled together as one sketch): `config` (settings + factory reset), `net` (AP/STA/NAPT/captive DNS), `timekeeper` (NTP time sync + timezone), `sensors`, `relays`, `mqtt`, and `web_portal` (+ `web_page.h` for the page shell). `ESP32-WiFi-Repeater.ino` is just `setup()`/`loop()` orchestration.
 
 ---
 
@@ -225,6 +240,7 @@ The firmware is split into focused modules (compiled together as one sketch): `c
 | **MQTT never connects** | Verify host/port/credentials, and that the broker is reachable **from the upstream LAN**. The device only connects once the STA link is up. |
 | **Captive portal doesn't pop up** | Some OSes cache it — open `http://192.168.4.1` manually. |
 | **Relay logic inverted** | Toggle **active-low** to match your relay/SSR board. |
+| **Clock-schedule relay never turns on** | The time isn't NTP-synced yet — schedules stay OFF until it is. Make sure the upstream link has internet and check the **Clock** pill on the Home tab / time settings in the System tab. |
 
 ---
 

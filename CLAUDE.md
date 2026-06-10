@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single Arduino sketch for the **ESP32** that turns the board into a **true NAT Wi-Fi repeater** (concurrent AP+STA with NAPT, so AP clients route out to the upstream internet) plus an IoT edge node: reads BME280 / DS18B20 / 2× analog sensors, drives two relay/SSR outputs from local rules, publishes to MQTT, and auto-registers in Home Assistant. Everything is configured at runtime through a captive-portal web page — **nothing is hard-coded and no re-flashing is needed to change settings.**
+A single Arduino sketch for the **ESP32** that turns the board into a **true NAT Wi-Fi repeater** (concurrent AP+STA with NAPT, so AP clients route out to the upstream internet) plus an IoT edge node: reads BME280 / DS18B20 / 2× analog sensors, drives two relay/SSR outputs from local rules (timer, sensor threshold, button, NTP clock schedules), publishes to MQTT, and auto-registers in Home Assistant. Everything is configured at runtime through a captive-portal web page — **nothing is hard-coded and no re-flashing is needed to change settings.**
 
 There is no test suite, no build script, and no package manifest. This is firmware compiled and flashed from the Arduino IDE.
 
@@ -25,10 +25,11 @@ There is no test suite, no build script, and no package manifest. This is firmwa
 |--------|------------------|----------------|
 | `config` | `Config config` (global) | All settings structs + NVS persistence + factory reset |
 | `net` | `Net::` | AP+STA, NAPT (the repeating), reconnect watchdog, captive DNS |
+| `timekeeper` | `TimeKeeper::` | SNTP time sync (started once the STA link is up) + POSIX timezone from config; gates the clock-schedule relay mode. Named "TimeKeeper" to avoid clashing with libc `<time.h>` |
 | `sensors` | `Sensors::`, `Readings` | Init buses, non-blocking DS18B20 conversion, sample + threshold eval |
-| `relays` | `Relays::` | Two outputs driven by timer/sensor/button rules + MQTT override |
+| `relays` | `Relays::` | Two outputs driven by timer/sensor/button/clock-schedule rules + MQTT override |
 | `mqtt` | `Mqtt::` | PubSubClient over the STA link; publish readings/alerts/relay state, subscribe to relay commands, HA discovery |
-| `web_portal` | `WebPortal::` | HTTP server: setup page, all config form handlers, live-readings JSON, captive redirects, factory reset |
+| `web_portal` | `WebPortal::` | HTTP server: tabbed setup page (Home/Network/MQTT/Sensors/Relays/System, streamed card-by-card to keep peak heap low), all config form handlers, live-readings JSON, captive redirects, factory reset |
 | `web_page.h` | — | The HTML/CSS page shell (PROGMEM strings) |
 
 Data flows one direction through `loop()`: sensors are sampled into a `Readings` snapshot, which `Relays::update()` consults (via `Sensors::metricValue`) and `Mqtt::publishReadings()` ships. Relay state changes are drained each loop with `Relays::consumeChanged(i)` and published immediately.
@@ -38,7 +39,7 @@ Data flows one direction through `loop()`: sensors are sampled into a `Readings`
 Settings live in **two separate NVS (`Preferences`) namespaces**, and this separation is deliberate:
 
 - **`"repeater"`** — Wi-Fi/AP credentials only (`sta_ssid`, `sta_pass`, `ap_ssid`, `ap_pass`, `pw_changed`). Owned entirely by `net.cpp`; stored as discrete keys. This is "Phase 1" config the device needs just to come up and serve the portal.
-- **`"settings"`** — everything else (MQTT, sensors, relays, button), serialized as **one JSON blob** under key `"json"` via ArduinoJson. Owned by `config.cpp` (`toJson`/`fromJson`).
+- **`"settings"`** — everything else (MQTT, time/NTP, sensors, relays, button), serialized as **one JSON blob** under key `"json"` via ArduinoJson. Owned by `config.cpp` (`toJson`/`fromJson`).
 
 `Config` does **not** hold Wi-Fi credentials. `Config::factoryReset()` clears **both** namespaces and reboots.
 
@@ -46,7 +47,7 @@ When extending the JSON config: add the field to the struct in `config.h`, then 
 
 ### Reboot-on-save model
 
-The web portal applies most config changes by **rebooting**. `handleMqtt`/`handleSensors`/`handleRelays` call `config.save()` then `sendRebootNotice(...)`; `handleApConfig` does the same after `Net::saveApCreds`. This is intentional — pin assignments and bus init only happen in each module's `begin()`, so a reboot is how new pins/buses take effect. Wi-Fi *station* changes (`handleSaveWifi`) are the exception: they reconnect live without a reboot. Don't try to make sensor/relay/MQTT edits apply without a reboot unless you also re-run the relevant `begin()`.
+The web portal applies most config changes by **rebooting**. `handleMqtt`/`handleSensors`/`handleRelays`/`handleTime` call `config.save()` then `sendRebootNotice(...)` (its `anchor` argument is the tab the page returns to after the reboot); `handleApConfig` does the same after `Net::saveApCreds`. This is intentional — pin assignments and bus init only happen in each module's `begin()`, so a reboot is how new pins/buses take effect. Wi-Fi *station* changes (`handleSaveWifi`) are the exception: they reconnect live without a reboot. Don't try to make sensor/relay/MQTT edits apply without a reboot unless you also re-run the relevant `begin()`.
 
 ## Hardware constraints that affect code
 
