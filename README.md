@@ -20,7 +20,8 @@ A single ESP32 sketch that turns the board into a **true NAT Wi-Fi repeater** (d
 - 📶 **Real repeater** — concurrent AP + STA with NAPT/NAT, so AP clients route out to the internet.
 - 🔧 **Zero-flash setup** — pick your network, set passwords, configure everything from a web page. Settings persist in flash.
 - 🔒 **Safe by default** — ships as `ESP32-repeaterAP` / `12345678` and nags you (on-page) until you change the default password.
-- 🌡️ **Sensors** — BME280 (temp/humidity/pressure), DS18B20 (temp), and 2× analog inputs with raw/percent/voltage scaling and one-click calibration.
+- 🌡️ **Sensors** — selectable I2C chip (BME280 / BMP280 / BMP180), a temperature probe (1-wire DS18B20 *or* single-wire DHT11/DHT22 with humidity), and 2× analog inputs with raw/percent/voltage scaling and one-click calibration.
+- 🎛️ **Tidy setup page** — each I/O block collapses when it's disabled and shows only the settings relevant to the selected chip.
 - 🚨 **Alerts** — per-reading low/high thresholds published to MQTT.
 - 🔌 **Relays** — two outputs driven by timer, sensor threshold (with hysteresis), a push button, clock schedules, or MQTT.
 - ⏰ **Clock schedules** — NTP-synced time (timezone + DST aware); each relay can follow up to 4 weekly ON/OFF slots.
@@ -90,8 +91,11 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
    | Library | Why | Notes |
    |---------|-----|-------|
    | **PubSubClient** | MQTT client | |
-   | **Adafruit BME280** | BME280 sensor | |
-   | **Adafruit Unified Sensor** | dependency of BME280 | |
+   | **Adafruit BME280** | BME280 I2C sensor | |
+   | **Adafruit BMP280 Library** | BMP280 I2C sensor | |
+   | **Adafruit BMP085 Library** | BMP180 I2C sensor (register-compatible) | |
+   | **DHT sensor library** | DHT11 / DHT22 probe | Adafruit |
+   | **Adafruit Unified Sensor** | dependency of the Adafruit sensors | |
    | **OneWire** | DS18B20 bus | |
    | **DallasTemperature** | DS18B20 readings | |
    | **ArduinoJson** | settings persistence | ⚠️ **must be v7** — v6 will not compile |
@@ -128,8 +132,8 @@ The sensor/relay channels use fixed, preconfigured GPIOs. Each channel is enable
 
 | Channel              | ESP32 pin(s)        | Notes |
 |----------------------|---------------------|-------|
-| I2C (BME280)         | SDA = 21, SCL = 22  | Address 0x76 or 0x77 (selectable) |
-| 1-wire (DS18B20)     | GPIO 4              | 4.7 kΩ pull-up from data to 3V3 |
+| I2C sensor (BME280 / BMP280 / BMP180) | SDA = 21, SCL = 22  | BME280/BMP280 address 0x76 or 0x77 (selectable); BMP180 fixed 0x77 |
+| Temp probe (DS18B20 *or* DHT11/DHT22) | GPIO 4              | 4.7 kΩ pull-up from data to 3V3 |
 | Analog input 1 / 2   | GPIO 34 / GPIO 35   | e.g. LDR. **ADC1 only** — see note |
 | Button input         | GPIO 25             | Wired to GND, uses internal pull-up (active-low) |
 | Relay / SSR 1 / 2    | GPIO 26 / GPIO 27   | Active-high or active-low (selectable) |
@@ -140,8 +144,10 @@ The sensor/relay channels use fixed, preconfigured GPIOs. Each channel is enable
 
 Everything runs at **3.3 V** (the ESP32 is **not** 5 V-tolerant on its GPIOs). Wire only the channels you plan to use; leave the rest disabled on the web page.
 
-- **BME280 (I2C, temp/humidity/pressure)** — `VCC → 3V3`, `GND → GND`, `SDA → GPIO 21`, `SCL → GPIO 22`. The module's I2C address is **0x76 or 0x77** (board-dependent); pick the matching one on the page.
-- **DS18B20 (1-wire temperature)** — `VCC → 3V3`, `GND → GND`, `DATA → GPIO 4`. **Add a 4.7 kΩ pull-up resistor between DATA and 3V3** — without it the sensor reads −127 °C.
+- **I2C sensor (BME280 / BMP280 / BMP180, temp + pressure, +humidity on BME280)** — `VCC → 3V3`, `GND → GND`, `SDA → GPIO 21`, `SCL → GPIO 22`. Pick the chip on the page; BME280/BMP280 are **0x76 or 0x77** (board-dependent, selectable), BMP180 is fixed at **0x77**.
+- **Temperature probe on GPIO 4** — choose one:
+  - **DS18B20 (1-wire)** — `VCC → 3V3`, `GND → GND`, `DATA → GPIO 4`. **Add a 4.7 kΩ pull-up between DATA and 3V3** — without it the sensor reads −127 °C.
+  - **DHT11 / DHT22 (single-wire, temp + humidity)** — `VCC → 3V3`, `GND → GND`, `DATA → GPIO 4`, same **4.7 kΩ pull-up** to 3V3. Select *single-wire* and the DHT model on the page.
 - **Analog sensor / LDR (input)** — wire as a voltage divider into **GPIO 34** (or 35):
   `3V3 ── LDR ──┬── GPIO34 ──╮` , `╰── 10 kΩ ── GND`. On the page pick *Percent* scaling and use **Set as min / Set as max** to calibrate the dark/bright ends. ⚠️ **Analog inputs must be on ADC1 (GPIO 32–39)** — ADC2 pins read garbage while Wi-Fi is on.
 - **Push button (input)** — one leg → `GPIO 25`, the other leg → `GND`. No resistor needed: the internal pull-up makes it **active-low** (pressed = LOW).
@@ -158,7 +164,7 @@ Everything lives on the page served at `http://192.168.4.1` (and auto-popped as 
 | **Home** | Status (upstream link, MQTT, clock) and a live view of every enabled sensor / relay plus the device time (refreshes every few seconds). |
 | **Network** | Scan and join the upstream Wi-Fi; rename the repeater AP and set its password (clears the default-password warning). |
 | **MQTT** | Broker host/port/credentials, base topic, client ID, publish interval, and Home Assistant discovery. |
-| **Sensors** | Enable BME280 / DS18B20 / analog inputs, choose units & scaling, set alert thresholds. |
+| **Sensors** | Enable & pick the I2C chip (BME280/BMP280/BMP180) and the GPIO4 probe (DS18B20 or DHT11/DHT22), choose units & scaling, set alert thresholds. |
 | **Relays** | Per-output mode (off / manual / timer / sensor / button / clock schedule), level + hysteresis, active-low, MQTT control. |
 | **System** | **Time & timezone** (NTP server + timezone with DST handling) and **factory reset** — wipe all settings and reboot to defaults. |
 
@@ -169,8 +175,8 @@ Everything lives on the page served at `http://192.168.4.1` (and auto-popped as 
 ## 🌡️ Sensors, MQTT & Relays
 
 ### Sensors
-- **BME280** — temperature, humidity, pressure (units selectable: °C/°F, hPa/inHg).
-- **DS18B20** — temperature (°C/°F).
+- **I2C sensor** — pick the chip on the Sensors tab: **BME280** (temperature, humidity, pressure), **BMP280** (temperature, pressure), or **BMP180** (temperature, pressure). Units selectable (°C/°F, hPa/inHg). The humidity reading and its threshold only appear for the BME280.
+- **Temperature probe (GPIO 4)** — choose **1-wire (DS18B20)** for temperature, or **single-wire (DHT11 / DHT22)** for temperature **and** humidity. Units selectable (°C/°F).
 - **Analog 1 / 2** — labelled inputs with **raw / percent / voltage** scaling. For percent, set the raw min/max — or just press **Set as min / Set as max** to capture the live ADC value at each end.
 
 Each reading has optional **low/high alert thresholds**, labelled with the quantity and unit they apply to.
@@ -183,8 +189,8 @@ Topic tree (base = `<baseTopic>/<clientId>`):
 | Topic | Direction | Payload |
 |-------|-----------|---------|
 | `.../status` | publish (retained, LWT) | `online` / `offline` |
-| `.../sensor/bme280/temperature` (`/humidity`, `/pressure`) | publish | value |
-| `.../sensor/ds18b20/temperature` | publish | value |
+| `.../sensor/i2c/temperature` (`/pressure`, and `/humidity` on BME280) | publish | value |
+| `.../sensor/probe/temperature` (and `/humidity` on DHT) | publish | value |
 | `.../sensor/analog1`, `.../sensor/analog2` | publish | value |
 | `.../diag/rssi`, `.../diag/uptime`, `.../diag/heap` | publish | Wi-Fi dBm / seconds / bytes |
 | `.../alert/<metric>` | publish (on change) | `OK` / `LOW` / `HIGH` |
@@ -247,8 +253,8 @@ The firmware is split into focused modules (compiled together as one sketch): `c
 | **Compile error about `JsonDocument`** | ArduinoJson **v6** is installed — update to **v7** in the Library Manager. |
 | **AP clients have Wi-Fi but no internet** | NAPT didn't come up. Check the Serial log says "NAPT enabled"; make sure the upstream actually connected (STA `WL_CONNECTED`). On core 2.x, NAPT must be compiled into lwIP. |
 | **Analog value stuck / random** | The pin isn't on **ADC1**. Use GPIO 32–39 (default 34/35); ADC2 pins read garbage while Wi-Fi is on. |
-| **DS18B20 reads −127 °C** | Missing **4.7 kΩ pull-up** between the data line and 3V3, or wrong pin (default GPIO 4). |
-| **BME280 "NOT found" on Serial** | Wrong I2C address — toggle 0x76 ↔ 0x77 on the page; check SDA=21 / SCL=22 wiring and 3V3 power. |
+| **DS18B20 reads −127 °C / DHT reads blank** | Missing **4.7 kΩ pull-up** between the data line and 3V3, wrong pin (default GPIO 4), or the wrong probe type selected on the page. |
+| **I2C sensor "NOT found" on Serial** | Wrong chip or address — confirm BME280/BMP280/BMP180 selection; for BME280/BMP280 toggle 0x76 ↔ 0x77 (BMP180 is fixed 0x77); check SDA=21 / SCL=22 wiring and 3V3 power. |
 | **MQTT never connects** | Verify host/port/credentials, and that the broker is reachable **from the upstream LAN**. The device only connects once the STA link is up. |
 | **Captive portal doesn't pop up** | Some OSes cache it — open `http://192.168.4.1` manually. |
 | **Relay logic inverted** | Toggle **active-low** to match your relay/SSR board. |
