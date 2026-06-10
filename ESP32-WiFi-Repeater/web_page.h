@@ -237,6 +237,32 @@ function toggleProbe() {
   if (hum)   hum.style.display   = dht ? '' : 'none';
 }
 
+// Input type select: show the digital (active-low) row or the touch
+// (live value + threshold) row.
+function toggleInput(n) {
+  const sel = document.getElementById('in' + n + '_type');
+  if (!sel) return;
+  const touch = (sel.value === '1');
+  const dig = document.getElementById('in' + n + '_dig');
+  const tch = document.getElementById('in' + n + '_touch');
+  if (dig) dig.style.display = touch ? 'none' : '';
+  if (tch) tch.style.display = touch ? '' : 'none';
+}
+
+// Poll the live capacitive-touch value for any input currently in touch mode.
+async function pollTouch() {
+  for (let n = 1; n <= 2; n++) {
+    const sel = document.getElementById('in' + n + '_type');
+    const out = document.getElementById('in' + n + '_val');
+    if (!sel || !out || sel.value !== '1') continue;
+    try {
+      const r = await fetch('/touch?ch=' + (n - 1));
+      out.textContent = (await r.text()).trim();
+    } catch (e) { /* offline; ignore */ }
+  }
+}
+setInterval(pollTouch, 1200);
+
 // Show only the option blocks that belong to the selected relay mode, and
 // collapse the whole relay body when the mode is Off.
 function modeChanged(n) {
@@ -272,13 +298,16 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   // Collapse each I/O block whose enable toggle is off (and keep it in sync).
   [['bme_en','bme_body'], ['ds_en','ds_body'], ['a1_en','a1_body'],
-   ['a2_en','a2_body'], ['btn_en','btn_body']].forEach(([cb, box]) => {
-    const el = document.getElementById(cb);
-    if (el) el.addEventListener('change', () => toggleBox(cb, box));
-    toggleBox(cb, box);
-  });
+   ['a2_en','a2_body'], ['in1_en','in1_body'], ['in2_en','in2_body']]
+    .forEach(([cb, box]) => {
+      const el = document.getElementById(cb);
+      if (el) el.addEventListener('change', () => toggleBox(cb, box));
+      toggleBox(cb, box);
+    });
   toggleI2c();
   toggleProbe();
+  toggleInput(1);
+  toggleInput(2);
   modeChanged(1);
   modeChanged(2);
   toggleAnalog(1);

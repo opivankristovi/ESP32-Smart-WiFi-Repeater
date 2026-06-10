@@ -12,6 +12,7 @@ void begin();                          // configure client from config
 void loop();                           // maintain connection (non-blocking)
 void publishReadings(const Readings& r);  // values + alert transitions
 void publishRelayState(int idx, bool on);
+void publishInputState(int idx, bool on);  // touch/button input -> binary_sensor
 bool connected();
 
 }  // namespace Mqtt

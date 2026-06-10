@@ -1,6 +1,7 @@
 #include "relays.h"
 #include "sensors.h"
 #include "timekeeper.h"
+#include "inputs.h"
 
 namespace Relays {
 
@@ -9,12 +10,6 @@ static bool changed[2] = {false, false};
 
 // Per-relay timer phase anchor.
 static unsigned long timerAnchor[2] = {0, 0};
-
-// Button debounce / edge detection (shared button input on PIN_BUTTON).
-static bool lastBtnStable = false;
-static bool lastBtnRaw    = false;
-static unsigned long btnChangedAt = 0;
-static const unsigned long kDebounceMs = 40;
 
 static void writePin(int idx, bool on) {
   bool level = config.relays[idx].activeLow ? !on : on;
@@ -38,26 +33,6 @@ void begin() {
     writePin(i, state[i]);
     timerAnchor[i] = millis();
   }
-  if (config.button.enabled) {
-    pinMode(PIN_BUTTON, config.button.activeLow ? INPUT_PULLUP : INPUT);
-  }
-}
-
-// Returns true exactly once per physical button press (rising edge of
-// "pressed"), with debouncing.
-static bool buttonPressed() {
-  if (!config.button.enabled) return false;
-  bool raw = digitalRead(PIN_BUTTON) == (config.button.activeLow ? LOW : HIGH);
-  if (raw != lastBtnRaw) {
-    lastBtnRaw = raw;
-    btnChangedAt = millis();
-  }
-  bool edge = false;
-  if (millis() - btnChangedAt > kDebounceMs && raw != lastBtnStable) {
-    lastBtnStable = raw;
-    if (raw) edge = true;  // pressed
-  }
-  return edge;
 }
 
 // Sensor-threshold mode with hysteresis. Holds previous state inside the band.
@@ -105,8 +80,6 @@ static bool evalSchedule(int idx) {
 }
 
 void update() {
-  bool press = buttonPressed();
-
   for (int i = 0; i < 2; i++) {
     const RelayConfig& rc = config.relays[i];
     bool desired = state[i];
@@ -129,7 +102,7 @@ void update() {
         desired = evalSensor(i, state[i]);
         break;
       case RELAY_BUTTON:
-        if (press) desired = !state[i];  // toggle on press
+        if (Inputs::edge(i)) desired = !state[i];  // input N toggles relay N
         break;
       case RELAY_SCHEDULE:
         desired = evalSchedule(i);

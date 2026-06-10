@@ -11,7 +11,9 @@ static const int PIN_I2C_SDA   = 21;
 static const int PIN_I2C_SCL   = 22;
 static const int PIN_ONEWIRE   = 4;
 static const int PIN_ANALOG[2] = {34, 35};
-static const int PIN_BUTTON    = 25;
+// Touch/button inputs: GPIO32 = touch T9, GPIO33 = touch T8 (also digital-in).
+// Both are touch-capable AND usable while WiFi is active (touch != ADC2).
+static const int PIN_INPUT[2]  = {32, 33};
 static const int PIN_RELAY[2]  = {26, 27};
 
 // ---------------------------------------------------------------------------
@@ -81,9 +83,17 @@ struct AnalogConfig {
   Threshold   thr;
 };
 
-struct ButtonConfig {
-  bool enabled  = false;
-  bool activeLow = true;           // pressed = LOW (INPUT_PULLUP)
+// One physical input: a digital push button or a capacitive touch pad. Drives
+// the matching relay (RELAY_BUTTON mode) and is published to MQTT / Home
+// Assistant as a binary_sensor so it can switch other devices too.
+enum InputType { INPUT_DIGITAL = 0, INPUT_TOUCH = 1 };
+
+struct InputConfig {
+  bool      enabled     = false;
+  InputType type        = INPUT_DIGITAL;
+  char      name[24]    = "input";   // Home Assistant entity name
+  bool      activeLow   = true;      // digital: pressed = LOW (INPUT_PULLUP)
+  uint16_t  touchThresh = 40;        // touch: pressed when touchRead() < this
 };
 
 // One clock-schedule entry. Spans where offMin <= onMin wrap past midnight
@@ -144,7 +154,7 @@ struct Config {
   I2cSensorConfig  i2c;
   ProbeConfig      probe;
   AnalogConfig     analog[2];
-  ButtonConfig     button;
+  InputConfig      inputs[2];
   RelayConfig      relays[2];
 
   void load();         // read from NVS (applies defaults if absent)
