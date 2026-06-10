@@ -74,19 +74,20 @@ static String thrFields(const String& prefix, const Threshold& t,
 }
 
 // Unit strings for the configured sensors.
-static String bmeTempUnit() { return config.bme280.tempUnit == 'F' ? "°F" : "°C"; }
-static String dsTempUnit()  { return config.ds18b20.tempUnit == 'F' ? "°F" : "°C"; }
-static String presUnit()    { return config.bme280.pressureInHg ? "inHg" : "hPa"; }
+static String bmeTempUnit() { return config.i2c.tempUnit == 'F' ? "°F" : "°C"; }
+static String dsTempUnit()  { return config.probe.tempUnit == 'F' ? "°F" : "°C"; }
+static String presUnit()    { return config.i2c.pressureInHg ? "inHg" : "hPa"; }
 static String analogUnit(AnalogScale s) {
   return s == ANALOG_VOLTAGE ? "V" : (s == ANALOG_PERCENT ? "%" : "");
 }
 
 static String sourceOptions(MetricSource sel) {
   struct { MetricSource v; const char* n; } items[] = {
-      {SRC_NONE, "(none)"},       {SRC_BME_TEMP, "BME280 temperature"},
-      {SRC_BME_HUM, "BME280 humidity"}, {SRC_BME_PRES, "BME280 pressure"},
-      {SRC_DS_TEMP, "DS18B20 temperature"}, {SRC_ANALOG1, "Analog 1"},
-      {SRC_ANALOG2, "Analog 2"}};
+      {SRC_NONE, "(none)"},          {SRC_I2C_TEMP, "I2C temperature"},
+      {SRC_I2C_HUM, "I2C humidity"}, {SRC_I2C_PRES, "I2C pressure"},
+      {SRC_PROBE_TEMP, "Probe temperature"},
+      {SRC_PROBE_HUM, "Probe humidity"},
+      {SRC_ANALOG1, "Analog 1"},     {SRC_ANALOG2, "Analog 2"}};
   String o;
   for (auto& it : items) {
     o += "<option value=\"" + String((int)it.v) + "\"" +
@@ -157,8 +158,21 @@ static String warningBanner() {
 static String appShell() {
   String wifiDot = Net::staConnected() ? "ok" : "";
   String mqttDot = (config.mqtt.enabled && Mqtt::connected()) ? "ok" : "";
+  // Mesh-network logo (derived from the project's avatar): ring + 6 nodes
+  // joined by a hexagram. Uses currentColor so .brand can theme it.
+  static const char* kLogo =
+      "<svg viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"currentColor\" "
+      "stroke-width=\"3\" stroke-linejoin=\"round\">"
+      "<circle cx=\"32\" cy=\"32\" r=\"24\"/>"
+      "<polygon points=\"32,8 52.8,44 11.2,44\"/>"
+      "<polygon points=\"52.8,20 32,56 11.2,20\"/>"
+      "<g fill=\"var(--bg)\"><circle cx=\"32\" cy=\"8\" r=\"5\"/>"
+      "<circle cx=\"52.8\" cy=\"20\" r=\"5\"/><circle cx=\"52.8\" cy=\"44\" r=\"5\"/>"
+      "<circle cx=\"32\" cy=\"56\" r=\"5\"/><circle cx=\"11.2\" cy=\"44\" r=\"5\"/>"
+      "<circle cx=\"11.2\" cy=\"20\" r=\"5\"/></g></svg>";
   String s = "<header class=\"hdr\"><div class=\"appbar\">"
-             "<h1>ESP32 Repeater</h1>"
+             "<span class=\"brand\">" + String(kLogo) +
+             "<h1>ESP32 Smart Repeater</h1></span>"
              "<span class=\"dotlbl\"><span class=\"dot " + wifiDot +
              "\"></span>WiFi</span>"
              "<span class=\"dotlbl\"><span class=\"dot " + mqttDot +
@@ -301,36 +315,73 @@ static String sensorsCard() {
   String s = "<div class=\"card\"><h2>Sensors</h2>"
              "<form method=\"POST\" action=\"/sensors\">";
 
-  // BME280
-  s += "<fieldset><legend>BME280 (I2C 21/22)</legend>";
-  s += checkbox("bme_en", "Enabled", config.bme280.enabled);
-  s += "<label for=\"bme_addr\">I2C address" +
-       info("Most BME280 boards are 0x76; some are 0x77. If the sensor isn't "
-            "detected, try the other address.") +
+  // I2C sensor (BME280 / BMP280 / BMP180)
+  s += "<fieldset><legend>I2C sensor (21/22)</legend>";
+  s += checkbox("bme_en", "Enabled", config.i2c.enabled,
+                "Barometric sensor on the I2C bus (SDA 21, SCL 22).");
+  s += "<div id=\"bme_body\">";
+  {
+    const char* i2cNames[] = {"BME280 (temp / humidity / pressure)",
+                              "BMP280 (temp / pressure)",
+                              "BMP180 (temp / pressure)"};
+    s += "<label for=\"bme_type\">Chip" +
+         info("BME280 also measures humidity. BMP280 and BMP180 are "
+              "temperature + pressure only. BMP180 has a fixed address.") +
+         "</label><select id=\"bme_type\" name=\"bme_type\" "
+         "onchange=\"toggleI2c()\">";
+    for (int k = 0; k < 3; k++) {
+      s += "<option value=\"" + String(k) + "\"" +
+           ((int)config.i2c.type == k ? " selected" : "") + ">" + i2cNames[k] +
+           "</option>";
+    }
+    s += "</select>";
+  }
+  s += "<div id=\"bme_addr_row\"><label for=\"bme_addr\">I2C address" +
+       info("Most BME280/BMP280 boards are 0x76; some are 0x77. If the sensor "
+            "isn't detected, try the other address.") +
        "</label><select id=\"bme_addr\" "
        "name=\"bme_addr\"><option value=\"118\"" +
-       String(config.bme280.address == 0x76 ? " selected" : "") +
+       String(config.i2c.address == 0x76 ? " selected" : "") +
        ">0x76</option><option value=\"119\"" +
-       String(config.bme280.address == 0x77 ? " selected" : "") +
-       ">0x77</option></select>";
-  s += unitSelect("bme_tu", config.bme280.tempUnit);
+       String(config.i2c.address == 0x77 ? " selected" : "") +
+       ">0x77</option></select></div>";
+  s += unitSelect("bme_tu", config.i2c.tempUnit);
   s += checkbox("bme_inhg", "Pressure in inHg (else hPa)",
-                config.bme280.pressureInHg,
+                config.i2c.pressureInHg,
                 "Unit for the pressure reading. Off = hPa (millibar), "
                 "on = inches of mercury.");
-  s += thrFields("bme_t", config.bme280.tTemp, "Temperature", bmeTempUnit());
-  s += thrFields("bme_h", config.bme280.tHum, "Humidity", "%");
-  s += thrFields("bme_p", config.bme280.tPres, "Pressure", presUnit());
-  s += "</fieldset>";
+  s += thrFields("bme_t", config.i2c.tTemp, "Temperature", bmeTempUnit());
+  s += "<div id=\"bme_hum_row\">" +
+       thrFields("bme_h", config.i2c.tHum, "Humidity", "%") + "</div>";
+  s += thrFields("bme_p", config.i2c.tPres, "Pressure", presUnit());
+  s += "</div></fieldset>";  // end bme_body
 
-  // DS18B20
-  s += "<fieldset><legend>DS18B20 (1-wire GPIO4)</legend>";
-  s += checkbox("ds_en", "Enabled", config.ds18b20.enabled,
-                "Dallas 1-wire temperature sensor on GPIO4. Needs a 4.7k "
-                "pull-up resistor from data to 3V3.");
-  s += unitSelect("ds_tu", config.ds18b20.tempUnit);
-  s += thrFields("ds_t", config.ds18b20.tTemp, "Temperature", dsTempUnit());
-  s += "</fieldset>";
+  // Temperature probe on GPIO4 (DS18B20 1-wire or DHT11/DHT22 single-wire)
+  s += "<fieldset><legend>Temperature probe (GPIO4)</legend>";
+  s += checkbox("ds_en", "Enabled", config.probe.enabled,
+                "Temperature probe on GPIO4. Both the DS18B20 and the DHT "
+                "sensors want a 4.7k pull-up from data to 3V3.");
+  s += "<div id=\"ds_body\">";
+  s += "<label for=\"ds_bus\">Sensor type" +
+       info("1-wire = Dallas DS18B20 (temperature only). single-wire = a DHT "
+            "sensor (temperature and humidity).") +
+       "</label><select id=\"ds_bus\" name=\"ds_bus\" onchange=\"toggleProbe()\">"
+       "<option value=\"ow\"" +
+       String(config.probe.type == PROBE_DS18B20 ? " selected" : "") +
+       ">1-wire (DS18B20)</option><option value=\"dht\"" +
+       String(config.probe.type != PROBE_DS18B20 ? " selected" : "") +
+       ">single-wire (DHT)</option></select>";
+  s += "<div id=\"ds_model_row\"><label for=\"ds_model\">DHT model</label>"
+       "<select id=\"ds_model\" name=\"ds_model\"><option value=\"22\"" +
+       String(config.probe.type == PROBE_DHT22 ? " selected" : "") +
+       ">DHT22 / AM2302</option><option value=\"11\"" +
+       String(config.probe.type == PROBE_DHT11 ? " selected" : "") +
+       ">DHT11</option></select></div>";
+  s += unitSelect("ds_tu", config.probe.tempUnit);
+  s += thrFields("ds_t", config.probe.tTemp, "Temperature", dsTempUnit());
+  s += "<div id=\"ds_hum_row\">" +
+       thrFields("ds_h", config.probe.tHum, "Humidity", "%") + "</div>";
+  s += "</div></fieldset>";  // end ds_body
 
   // Analog 1 & 2
   const char* scaleNames[] = {"Raw (0-4095)", "Percent", "Voltage (V)"};
@@ -341,6 +392,7 @@ static String sensorsCard() {
     s += "<fieldset><legend>Analog " + n + " (GPIO" + String(PIN_ANALOG[i]) +
          ")</legend>";
     s += checkbox(p + "_en", "Enabled", a.enabled);
+    s += "<div id=\"" + p + "_body\">";
     s += textField(p + "_lbl", "Label", a.label, "text", "",
                    "Friendly name shown in live readings and Home Assistant "
                    "(e.g. \"Light level\").");
@@ -375,7 +427,7 @@ static String sensorsCard() {
     s += thrFields(p + "_t", a.thr,
                    String(a.label).length() ? String(a.label) : ("Analog " + n),
                    analogUnit(a.scale));
-    s += "</fieldset>";
+    s += "</div></fieldset>";  // end aN_body
   }
 
   // Button
@@ -383,10 +435,11 @@ static String sensorsCard() {
   s += checkbox("btn_en", "Enabled", config.button.enabled,
                 "A momentary push button to GND. Set a relay's mode to "
                 "\"Button toggle\" to flip it on each press.");
+  s += "<div id=\"btn_body\">";
   s += checkbox("btn_al", "Active low (INPUT_PULLUP)", config.button.activeLow,
                 "On (recommended): button wired between the pin and GND, using "
                 "the internal pull-up. Off: button drives the pin HIGH.");
-  s += "</fieldset>";
+  s += "</div></fieldset>";  // end btn_body
 
   s += "<button type=\"submit\">Save sensors</button>"
        "<p class=\"muted\">Saving reboots to apply pin changes.</p>"
@@ -457,6 +510,7 @@ static String relaysCard() {
            "</option>";
     }
     s += "</select>";
+    s += "<div id=\"" + p + "_body\">";  // collapses when mode is Off
     s += checkbox(p + "_al", "Active low", r.activeLow,
                   "Enable if your relay/SSR board switches ON when the pin is "
                   "LOW (common for blue relay boards).");
@@ -510,7 +564,7 @@ static String relaysCard() {
                   r.allowMqtt,
                   "Let an MQTT ON/OFF/TOGGLE message switch this output. In "
                   "Home Assistant it then appears as a switch (else read-only).");
-    s += "</fieldset>";
+    s += "</div></fieldset>";  // end rN_body
   }
   s += "<button type=\"submit\">Save relays</button>"
        "<p class=\"muted\">Saving reboots to apply pin changes.</p>"
@@ -654,17 +708,25 @@ static void handleMqtt() {
 }
 
 static void handleSensors() {
-  config.bme280.enabled = server.hasArg("bme_en");
-  config.bme280.address = server.arg("bme_addr").toInt();
-  config.bme280.tempUnit = server.arg("bme_tu")[0] == 'F' ? 'F' : 'C';
-  config.bme280.pressureInHg = server.hasArg("bme_inhg");
-  parseThr("bme_t", config.bme280.tTemp);
-  parseThr("bme_h", config.bme280.tHum);
-  parseThr("bme_p", config.bme280.tPres);
+  config.i2c.enabled = server.hasArg("bme_en");
+  config.i2c.type = (I2cType)server.arg("bme_type").toInt();
+  config.i2c.address = config.i2c.type == I2C_BMP180
+                           ? 0x77  // BMP180 has a fixed I2C address
+                           : (uint8_t)server.arg("bme_addr").toInt();
+  config.i2c.tempUnit = server.arg("bme_tu")[0] == 'F' ? 'F' : 'C';
+  config.i2c.pressureInHg = server.hasArg("bme_inhg");
+  parseThr("bme_t", config.i2c.tTemp);
+  parseThr("bme_h", config.i2c.tHum);
+  parseThr("bme_p", config.i2c.tPres);
 
-  config.ds18b20.enabled = server.hasArg("ds_en");
-  config.ds18b20.tempUnit = server.arg("ds_tu")[0] == 'F' ? 'F' : 'C';
-  parseThr("ds_t", config.ds18b20.tTemp);
+  config.probe.enabled = server.hasArg("ds_en");
+  if (server.arg("ds_bus") == "dht")
+    config.probe.type = server.arg("ds_model") == "11" ? PROBE_DHT11 : PROBE_DHT22;
+  else
+    config.probe.type = PROBE_DS18B20;
+  config.probe.tempUnit = server.arg("ds_tu")[0] == 'F' ? 'F' : 'C';
+  parseThr("ds_t", config.probe.tTemp);
+  parseThr("ds_h", config.probe.tHum);
 
   for (int i = 0; i < 2; i++) {
     String p = "a" + String(i + 1);
@@ -755,13 +817,15 @@ static void handleReadings() {
   };
 
   add("Time", TimeKeeper::synced() ? TimeKeeper::fmtNow() : "not synced");
-  if (r.bmeOk) {
-    add("BME temp", fmt(r.temp) + " " + config.bme280.tempUnit);
-    add("BME humidity", fmt(r.hum) + " %");
-    add("BME pressure",
-        fmt(r.pres) + (config.bme280.pressureInHg ? " inHg" : " hPa"));
+  if (r.i2cOk) {
+    add("Temperature", fmt(r.temp) + " " + config.i2c.tempUnit);
+    if (config.i2c.hasHumidity()) add("Humidity", fmt(r.hum) + " %");
+    add("Pressure",
+        fmt(r.pres) + (config.i2c.pressureInHg ? " inHg" : " hPa"));
   }
-  if (r.dsOk) add("DS18B20", fmt(r.dsTemp) + " " + config.ds18b20.tempUnit);
+  if (r.probeOk)
+    add("Probe temp", fmt(r.probeTemp) + " " + config.probe.tempUnit);
+  if (r.probeHumOk) add("Probe humidity", fmt(r.probeHum) + " %");
   const char* aUnit[] = {"", " %", " V"};
   if (r.a1Ok)
     add(String(config.analog[0].label),

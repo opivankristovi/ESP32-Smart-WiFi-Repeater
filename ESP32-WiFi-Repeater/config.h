@@ -19,13 +19,22 @@ static const int PIN_RELAY[2]  = {26, 27};
 // ---------------------------------------------------------------------------
 enum MetricState { METRIC_OK = 0, METRIC_LOW = 1, METRIC_HIGH = 2 };
 
-// Identifies a sensor metric, used as a relay rule source.
+// Identifies a sensor metric, used as a relay rule source. The integer values
+// are persisted in the relay config blob, so they are FIXED -- only append new
+// sources at the end; never reorder or reuse a value.
 enum MetricSource {
   SRC_NONE = 0,
-  SRC_BME_TEMP, SRC_BME_HUM, SRC_BME_PRES,
-  SRC_DS_TEMP,
-  SRC_ANALOG1, SRC_ANALOG2
+  SRC_I2C_TEMP  = 1, SRC_I2C_HUM = 2, SRC_I2C_PRES = 3,  // I2C baro/humidity chip
+  SRC_PROBE_TEMP = 4,                                    // 1-wire / single-wire probe
+  SRC_ANALOG1 = 5, SRC_ANALOG2 = 6,
+  SRC_PROBE_HUM = 7                                       // DHT humidity (appended)
 };
+
+// I2C barometric/humidity sensor selectable on the shared I2C bus.
+enum I2cType { I2C_BME280 = 0, I2C_BMP280, I2C_BMP180 };
+
+// Temperature probe on the shared data pin: 1-wire (DS18B20) or single-wire DHT.
+enum ProbeType { PROBE_DS18B20 = 0, PROBE_DHT11, PROBE_DHT22 };
 
 enum AnalogScale { ANALOG_RAW = 0, ANALOG_PERCENT = 1, ANALOG_VOLTAGE = 2 };
 
@@ -42,18 +51,25 @@ struct Threshold {
   float high        = 0.0f;
 };
 
-struct Bme280Config {
+// I2C sensor: BME280 (T/RH/P), BMP280 (T/P) or BMP180 (T/P, fixed addr 0x77).
+struct I2cSensorConfig {
   bool      enabled      = false;
-  uint8_t   address      = 0x76;   // 0x76 or 0x77
+  I2cType   type         = I2C_BME280;
+  uint8_t   address      = 0x76;   // 0x76 or 0x77 (forced 0x77 for BMP180)
   char      tempUnit     = 'C';    // 'C' or 'F'
   bool      pressureInHg = false;  // false = hPa, true = inHg
   Threshold tTemp, tHum, tPres;
+  bool hasHumidity() const { return type == I2C_BME280; }
 };
 
-struct Ds18b20Config {
+// Shared-pin temperature probe: DS18B20 (1-wire) or DHT11/DHT22 (single-wire).
+struct ProbeConfig {
   bool      enabled  = false;
+  ProbeType type     = PROBE_DS18B20;
   char      tempUnit = 'C';        // 'C' or 'F'
   Threshold tTemp;
+  Threshold tHum;                  // only meaningful for DHT
+  bool hasHumidity() const { return type != PROBE_DS18B20; }
 };
 
 struct AnalogConfig {
@@ -123,13 +139,13 @@ struct MqttConfig {
 // the Phase-1 "repeater" namespace handled by the net module.
 // ---------------------------------------------------------------------------
 struct Config {
-  MqttConfig    mqtt;
-  TimeConfig    timecfg;
-  Bme280Config  bme280;
-  Ds18b20Config ds18b20;
-  AnalogConfig  analog[2];
-  ButtonConfig  button;
-  RelayConfig   relays[2];
+  MqttConfig       mqtt;
+  TimeConfig       timecfg;
+  I2cSensorConfig  i2c;
+  ProbeConfig      probe;
+  AnalogConfig     analog[2];
+  ButtonConfig     button;
+  RelayConfig      relays[2];
 
   void load();         // read from NVS (applies defaults if absent)
   void save();         // write to NVS

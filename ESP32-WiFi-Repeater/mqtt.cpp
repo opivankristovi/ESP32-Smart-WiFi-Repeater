@@ -13,7 +13,8 @@ static unsigned long lastReconnect = 0;
 static const unsigned long kReconnectEveryMs = 5000;
 
 // Previous alert states, to publish only on transition.
-static MetricState prevState[6];  // temp,hum,pres,ds,a1,a2
+// index: 0 i2c temp, 1 i2c hum, 2 i2c pres, 3 probe temp, 4 a1, 5 a2, 6 probe hum
+static MetricState prevState[7];
 static bool prevInit = false;
 
 static String base() {
@@ -59,7 +60,7 @@ static void addDeviceAndAvail(JsonDocument& doc) {
   doc["payload_not_available"] = "offline";
   JsonObject dev = doc["device"].to<JsonObject>();
   dev["identifiers"].to<JsonArray>().add(config.mqtt.clientId);
-  dev["name"]         = String("ESP32 Repeater (") + config.mqtt.clientId + ")";
+  dev["name"]         = String("ESP32 Smart Repeater (") + config.mqtt.clientId + ")";
   dev["manufacturer"] = "Espressif";
   dev["model"]        = "ESP32 WiFi Repeater";
 }
@@ -133,19 +134,47 @@ static void diagDisc(const String& key, const String& name, const String& sub,
   pubDisc("sensor", key, doc);
 }
 
-static void publishDiscovery() {
-  const char* tempUnit = (config.bme280.tempUnit == 'F') ? "°F" : "°C";
-  const char* dsUnit   = (config.ds18b20.tempUnit == 'F') ? "°F" : "°C";
-  const char* presUnit = config.bme280.pressureInHg ? "inHg" : "hPa";
+// Display name for the currently selected chip on each bus.
+static const char* i2cChipName() {
+  switch (config.i2c.type) {
+    case I2C_BMP280: return "BMP280";
+    case I2C_BMP180: return "BMP180";
+    default:         return "BME280";
+  }
+}
+static const char* probeChipName() {
+  switch (config.probe.type) {
+    case PROBE_DHT11: return "DHT11";
+    case PROBE_DHT22: return "DHT22";
+    default:          return "DS18B20";
+  }
+}
 
-  sensorDisc("bme_temp", "BME280 temperature", "/sensor/bme280/temperature",
-             "temperature", tempUnit, config.bme280.enabled);
-  sensorDisc("bme_hum", "BME280 humidity", "/sensor/bme280/humidity",
-             "humidity", "%", config.bme280.enabled);
-  sensorDisc("bme_pres", "BME280 pressure", "/sensor/bme280/pressure",
-             "pressure", presUnit, config.bme280.enabled);
-  sensorDisc("ds_temp", "DS18B20 temperature", "/sensor/ds18b20/temperature",
-             "temperature", dsUnit, config.ds18b20.enabled);
+static void publishDiscovery() {
+  const char* tempUnit = (config.i2c.tempUnit == 'F') ? "°F" : "°C";
+  const char* probeUnit = (config.probe.tempUnit == 'F') ? "°F" : "°C";
+  const char* presUnit = config.i2c.pressureInHg ? "inHg" : "hPa";
+  String chip = i2cChipName();
+  String probe = probeChipName();
+
+  // Type-neutral topics; entity names follow the selected chip. Humidity is
+  // advertised only when the selected chip provides it (else removed from HA).
+  sensorDisc("i2c_temp", chip + " temperature", "/sensor/i2c/temperature",
+             "temperature", tempUnit, config.i2c.enabled);
+  sensorDisc("i2c_hum", chip + " humidity", "/sensor/i2c/humidity",
+             "humidity", "%", config.i2c.enabled && config.i2c.hasHumidity());
+  sensorDisc("i2c_pres", chip + " pressure", "/sensor/i2c/pressure",
+             "pressure", presUnit, config.i2c.enabled);
+  sensorDisc("probe_temp", probe + " temperature", "/sensor/probe/temperature",
+             "temperature", probeUnit, config.probe.enabled);
+  sensorDisc("probe_hum", probe + " humidity", "/sensor/probe/humidity",
+             "humidity", "%", config.probe.enabled && config.probe.hasHumidity());
+
+  // Remove entities advertised under the old chip-specific keys (pre-upgrade).
+  removeDisc("sensor", "bme_temp");
+  removeDisc("sensor", "bme_hum");
+  removeDisc("sensor", "bme_pres");
+  removeDisc("sensor", "ds_temp");
 
   for (int i = 0; i < 2; i++) {
     String key = "analog" + String(i + 1);
@@ -220,17 +249,23 @@ void publishReadings(const Readings& r) {
   if (!client.connected()) return;
   String b = base();
 
-  if (r.bmeOk) {
-    pubFloat(b + "/sensor/bme280/temperature", r.temp);
-    pubFloat(b + "/sensor/bme280/humidity", r.hum);
-    pubFloat(b + "/sensor/bme280/pressure", r.pres);
-    pubAlert(0, "bme280/temperature", r.st_temp);
-    pubAlert(1, "bme280/humidity", r.st_hum);
-    pubAlert(2, "bme280/pressure", r.st_pres);
+  if (r.i2cOk) {
+    pubFloat(b + "/sensor/i2c/temperature", r.temp);
+    pubFloat(b + "/sensor/i2c/pressure", r.pres);
+    pubAlert(0, "i2c/temperature", r.st_temp);
+    pubAlert(2, "i2c/pressure", r.st_pres);
+    if (config.i2c.hasHumidity()) {
+      pubFloat(b + "/sensor/i2c/humidity", r.hum);
+      pubAlert(1, "i2c/humidity", r.st_hum);
+    }
   }
-  if (r.dsOk) {
-    pubFloat(b + "/sensor/ds18b20/temperature", r.dsTemp);
-    pubAlert(3, "ds18b20/temperature", r.st_ds);
+  if (r.probeOk) {
+    pubFloat(b + "/sensor/probe/temperature", r.probeTemp);
+    pubAlert(3, "probe/temperature", r.st_probe);
+  }
+  if (r.probeHumOk) {
+    pubFloat(b + "/sensor/probe/humidity", r.probeHum);
+    pubAlert(6, "probe/humidity", r.st_probeHum);
   }
   if (r.a1Ok) {
     pubFloat(b + "/sensor/analog1", r.a1);
