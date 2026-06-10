@@ -44,19 +44,22 @@ static String toJson() {
   t["srv"] = config.timecfg.server;
   t["tz"]  = config.timecfg.tz;
 
-  JsonObject b = doc["bme"].to<JsonObject>();
-  b["en"]   = config.bme280.enabled;
-  b["addr"] = config.bme280.address;
-  b["tu"]   = String(config.bme280.tempUnit);
-  b["inhg"] = config.bme280.pressureInHg;
-  thrToJson(b["t"].to<JsonObject>(), config.bme280.tTemp);
-  thrToJson(b["h"].to<JsonObject>(), config.bme280.tHum);
-  thrToJson(b["p"].to<JsonObject>(), config.bme280.tPres);
+  JsonObject b = doc["bme"].to<JsonObject>();  // key kept for storage stability
+  b["en"]   = config.i2c.enabled;
+  b["type"] = (int)config.i2c.type;
+  b["addr"] = config.i2c.address;
+  b["tu"]   = String(config.i2c.tempUnit);
+  b["inhg"] = config.i2c.pressureInHg;
+  thrToJson(b["t"].to<JsonObject>(), config.i2c.tTemp);
+  thrToJson(b["h"].to<JsonObject>(), config.i2c.tHum);
+  thrToJson(b["p"].to<JsonObject>(), config.i2c.tPres);
 
-  JsonObject d = doc["ds"].to<JsonObject>();
-  d["en"] = config.ds18b20.enabled;
-  d["tu"] = String(config.ds18b20.tempUnit);
-  thrToJson(d["t"].to<JsonObject>(), config.ds18b20.tTemp);
+  JsonObject d = doc["ds"].to<JsonObject>();  // key kept for storage stability
+  d["en"]   = config.probe.enabled;
+  d["type"] = (int)config.probe.type;
+  d["tu"]   = String(config.probe.tempUnit);
+  thrToJson(d["t"].to<JsonObject>(), config.probe.tTemp);
+  thrToJson(d["h"].to<JsonObject>(), config.probe.tHum);
 
   JsonArray aArr = doc["an"].to<JsonArray>();
   for (int i = 0; i < 2; i++) {
@@ -135,20 +138,23 @@ static void fromJson(const String& json) {
 
   JsonObjectConst b = doc["bme"];
   if (b) {
-    config.bme280.enabled      = b["en"] | false;
-    config.bme280.address      = b["addr"] | 0x76;
-    config.bme280.tempUnit     = (b["tu"] | "C")[0];
-    config.bme280.pressureInHg = b["inhg"] | false;
-    thrFromJson(b["t"], config.bme280.tTemp);
-    thrFromJson(b["h"], config.bme280.tHum);
-    thrFromJson(b["p"], config.bme280.tPres);
+    config.i2c.enabled      = b["en"] | false;
+    config.i2c.type         = (I2cType)(b["type"] | 0);
+    config.i2c.address      = b["addr"] | 0x76;
+    config.i2c.tempUnit     = (b["tu"] | "C")[0];
+    config.i2c.pressureInHg = b["inhg"] | false;
+    thrFromJson(b["t"], config.i2c.tTemp);
+    thrFromJson(b["h"], config.i2c.tHum);
+    thrFromJson(b["p"], config.i2c.tPres);
   }
 
   JsonObjectConst d = doc["ds"];
   if (d) {
-    config.ds18b20.enabled  = d["en"] | false;
-    config.ds18b20.tempUnit = (d["tu"] | "C")[0];
-    thrFromJson(d["t"], config.ds18b20.tTemp);
+    config.probe.enabled  = d["en"] | false;
+    config.probe.type     = (ProbeType)(d["type"] | 0);
+    config.probe.tempUnit = (d["tu"] | "C")[0];
+    thrFromJson(d["t"], config.probe.tTemp);
+    thrFromJson(d["h"], config.probe.tHum);
   }
 
   JsonArrayConst aArr = doc["an"];

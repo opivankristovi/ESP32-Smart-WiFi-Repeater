@@ -1,17 +1,26 @@
 #include "sensors.h"
 #include <Wire.h>
 #include <Adafruit_BME280.h>
+#include <Adafruit_BMP280.h>
+#include <Adafruit_BMP085.h>  // also covers the register-compatible BMP180
+#include <DHT.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
 namespace Sensors {
 
+// ---- I2C sensor (one of BME280 / BMP280 / BMP180) --------------------------
 static Adafruit_BME280 bme;
-static bool bmeReady = false;
+static Adafruit_BMP280 bmp280;
+static Adafruit_BMP085 bmp180;
+static bool i2cReady = false;
 
+// ---- probe: DS18B20 (1-wire) or DHT11/DHT22 (single-wire), shared pin -------
 static OneWire oneWire(PIN_ONEWIRE);
 static DallasTemperature ds(&oneWire);
 static bool dsReady = false;
+static DHT* dht = nullptr;   // constructed in begin() with the configured model
+static bool dhtReady = false;
 
 // Non-blocking DS18B20 conversion state machine.
 static bool dsConverting = false;
@@ -48,17 +57,41 @@ static float scaleAnalog(const AnalogConfig& cfg, int raw, int mv) {
 
 // ---- init ------------------------------------------------------------------
 void begin() {
-  if (config.bme280.enabled) {
+  if (config.i2c.enabled) {
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-    bmeReady = bme.begin(config.bme280.address, &Wire);
-    Serial.printf("BME280 %s\n", bmeReady ? "ready" : "NOT found");
+    switch (config.i2c.type) {
+      case I2C_BMP280:
+        i2cReady = bmp280.begin(config.i2c.address);
+        Serial.printf("BMP280 %s\n", i2cReady ? "ready" : "NOT found");
+        break;
+      case I2C_BMP180:
+        i2cReady = bmp180.begin();  // fixed I2C address 0x77, uses global Wire
+        Serial.printf("BMP180 %s\n", i2cReady ? "ready" : "NOT found");
+        break;
+      case I2C_BME280:
+      default:
+        i2cReady = bme.begin(config.i2c.address, &Wire);
+        Serial.printf("BME280 %s\n", i2cReady ? "ready" : "NOT found");
+        break;
+    }
   }
-  if (config.ds18b20.enabled) {
-    ds.begin();
-    ds.setWaitForConversion(false);  // async conversions
-    dsReady = ds.getDeviceCount() > 0;
-    Serial.printf("DS18B20 %s\n", dsReady ? "ready" : "NOT found");
+
+  if (config.probe.enabled) {
+    if (config.probe.type == PROBE_DS18B20) {
+      ds.begin();
+      ds.setWaitForConversion(false);  // async conversions
+      dsReady = ds.getDeviceCount() > 0;
+      Serial.printf("DS18B20 %s\n", dsReady ? "ready" : "NOT found");
+    } else {
+      dht = new DHT(PIN_ONEWIRE,
+                    config.probe.type == PROBE_DHT11 ? DHT11 : DHT22);
+      dht->begin();
+      dhtReady = true;  // DHT has no presence check; reads validate themselves
+      Serial.printf("%s started\n",
+                    config.probe.type == PROBE_DHT11 ? "DHT11" : "DHT22");
+    }
   }
+
   for (int i = 0; i < 2; i++) {
     if (config.analog[i].enabled) {
       pinMode(PIN_ANALOG[i], INPUT);
@@ -68,7 +101,7 @@ void begin() {
 
 // ---- non-blocking DS18B20 --------------------------------------------------
 void tick() {
-  if (!dsReady) return;
+  if (!dsReady) return;  // only the 1-wire probe uses the async state machine
   if (!dsConverting) {
     ds.requestTemperatures();
     dsConverting = true;
@@ -84,26 +117,59 @@ void tick() {
 Readings readAll() {
   Readings r;
 
-  if (config.bme280.enabled && bmeReady) {
-    float c = bme.readTemperature();
-    float h = bme.readHumidity();
-    float pPa = bme.readPressure();
-    if (!isnan(c) && !isnan(h) && !isnan(pPa) && pPa > 0) {
-      r.bmeOk = true;
-      r.temp = cToUnit(c, config.bme280.tempUnit);
-      r.hum  = h;
-      r.pres = config.bme280.pressureInHg ? (pPa * 0.0002953f)
-                                          : (pPa / 100.0f);  // inHg or hPa
-      r.st_temp = evalThr(r.temp, config.bme280.tTemp);
-      r.st_hum  = evalThr(r.hum,  config.bme280.tHum);
-      r.st_pres = evalThr(r.pres, config.bme280.tPres);
+  if (config.i2c.enabled && i2cReady) {
+    float c = NAN, h = NAN, pPa = NAN;
+    switch (config.i2c.type) {
+      case I2C_BMP280:
+        c = bmp280.readTemperature();
+        pPa = bmp280.readPressure();
+        break;
+      case I2C_BMP180:
+        c = bmp180.readTemperature();
+        pPa = bmp180.readPressure();
+        break;
+      case I2C_BME280:
+      default:
+        c = bme.readTemperature();
+        h = bme.readHumidity();
+        pPa = bme.readPressure();
+        break;
+    }
+    if (!isnan(c) && !isnan(pPa) && pPa > 0) {
+      r.i2cOk = true;
+      r.temp = cToUnit(c, config.i2c.tempUnit);
+      r.pres = config.i2c.pressureInHg ? (pPa * 0.0002953f)
+                                       : (pPa / 100.0f);  // inHg or hPa
+      r.st_temp = evalThr(r.temp, config.i2c.tTemp);
+      r.st_pres = evalThr(r.pres, config.i2c.tPres);
+      if (config.i2c.hasHumidity() && !isnan(h)) {
+        r.hum = h;
+        r.st_hum = evalThr(r.hum, config.i2c.tHum);
+      }
     }
   }
 
-  if (config.ds18b20.enabled && dsReady && !isnan(dsLastC)) {
-    r.dsOk = true;
-    r.dsTemp = cToUnit(dsLastC, config.ds18b20.tempUnit);
-    r.st_ds = evalThr(r.dsTemp, config.ds18b20.tTemp);
+  if (config.probe.enabled) {
+    if (config.probe.type == PROBE_DS18B20) {
+      if (dsReady && !isnan(dsLastC)) {
+        r.probeOk = true;
+        r.probeTemp = cToUnit(dsLastC, config.probe.tempUnit);
+        r.st_probe = evalThr(r.probeTemp, config.probe.tTemp);
+      }
+    } else if (dht) {
+      float c = dht->readTemperature();  // library self-throttles to >=2 s
+      float h = dht->readHumidity();
+      if (!isnan(c)) {
+        r.probeOk = true;
+        r.probeTemp = cToUnit(c, config.probe.tempUnit);
+        r.st_probe = evalThr(r.probeTemp, config.probe.tTemp);
+      }
+      if (!isnan(h)) {
+        r.probeHumOk = true;
+        r.probeHum = h;
+        r.st_probeHum = evalThr(r.probeHum, config.probe.tHum);
+      }
+    }
   }
 
   for (int i = 0; i < 2; i++) {
@@ -124,14 +190,16 @@ Readings readAll() {
 float metricValue(MetricSource src, bool& ok) {
   ok = true;
   switch (src) {
-    case SRC_BME_TEMP: ok = last.bmeOk; return last.temp;
-    case SRC_BME_HUM:  ok = last.bmeOk; return last.hum;
-    case SRC_BME_PRES: ok = last.bmeOk; return last.pres;
-    case SRC_DS_TEMP:  ok = last.dsOk;  return last.dsTemp;
-    case SRC_ANALOG1:  ok = last.a1Ok;  return last.a1;
-    case SRC_ANALOG2:  ok = last.a2Ok;  return last.a2;
+    case SRC_I2C_TEMP:   ok = last.i2cOk;      return last.temp;
+    case SRC_I2C_HUM:    ok = last.i2cOk && config.i2c.hasHumidity();
+                                                return last.hum;
+    case SRC_I2C_PRES:   ok = last.i2cOk;      return last.pres;
+    case SRC_PROBE_TEMP: ok = last.probeOk;    return last.probeTemp;
+    case SRC_PROBE_HUM:  ok = last.probeHumOk; return last.probeHum;
+    case SRC_ANALOG1:    ok = last.a1Ok;       return last.a1;
+    case SRC_ANALOG2:    ok = last.a2Ok;       return last.a2;
     case SRC_NONE:
-    default:           ok = false;      return 0.0f;
+    default:             ok = false;           return 0.0f;
   }
 }
 

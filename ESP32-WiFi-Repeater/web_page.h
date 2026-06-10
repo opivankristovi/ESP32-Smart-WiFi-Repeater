@@ -15,7 +15,8 @@ const char PAGE_HEAD[] PROGMEM = R"HTML(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1220">
-  <title>ESP32 Repeater</title>
+  <title>ESP32 Smart Repeater</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%2360a5fa' stroke-width='4' stroke-linejoin='round'><circle cx='32' cy='32' r='24'/><polygon points='32,8 52.8,44 11.2,44'/><polygon points='52.8,20 32,56 11.2,20'/></svg>">
   <style>
     :root {
       --bg: #0b1220; --card: #151e2e; --card2: #1c2740; --border: #27344d;
@@ -33,8 +34,12 @@ const char PAGE_HEAD[] PROGMEM = R"HTML(
            border-bottom: 1px solid var(--border); }
     .appbar { display: flex; align-items: center; gap: .9rem;
               padding: .8rem 1rem .55rem; max-width: 560px; margin: 0 auto; }
-    .appbar h1 { font-size: 1.02rem; margin: 0; flex: 1; font-weight: 700;
-                 letter-spacing: .2px; }
+    .brand { display: flex; align-items: center; gap: .5rem; flex: 1;
+             min-width: 0; }
+    .brand svg { width: 24px; height: 24px; flex: 0 0 auto;
+                 color: var(--accent2); }
+    .appbar h1 { font-size: 1.02rem; margin: 0; font-weight: 700;
+                 letter-spacing: .2px; white-space: nowrap; }
     .dotlbl { display: flex; align-items: center; gap: .35rem;
               font-size: .72rem; color: var(--muted); font-weight: 600; }
     .dot { width: 9px; height: 9px; border-radius: 50%;
@@ -203,13 +208,45 @@ async function refresh() {
 setInterval(refresh, 5000);
 refresh();
 
-// Show only the option blocks that belong to the selected relay mode.
+// Collapse a settings block when its enable checkbox is off.
+function toggleBox(cbId, boxId) {
+  const cb = document.getElementById(cbId), b = document.getElementById(boxId);
+  if (cb && b) b.style.display = cb.checked ? '' : 'none';
+}
+
+// I2C chip select: BMP180 has a fixed address (hide the picker); only BME280
+// has humidity (show its threshold).
+function toggleI2c() {
+  const sel = document.getElementById('bme_type');
+  if (!sel) return;
+  const addr = document.getElementById('bme_addr_row');
+  const hum  = document.getElementById('bme_hum_row');
+  if (addr) addr.style.display = (sel.value === '2') ? 'none' : '';   // 2=BMP180
+  if (hum)  hum.style.display  = (sel.value === '0') ? '' : 'none';   // 0=BME280
+}
+
+// Probe bus select: single-wire (DHT) reveals the model picker + humidity
+// threshold; 1-wire (DS18B20) hides them.
+function toggleProbe() {
+  const sel = document.getElementById('ds_bus');
+  if (!sel) return;
+  const dht = (sel.value === 'dht');
+  const model = document.getElementById('ds_model_row');
+  const hum   = document.getElementById('ds_hum_row');
+  if (model) model.style.display = dht ? '' : 'none';
+  if (hum)   hum.style.display   = dht ? '' : 'none';
+}
+
+// Show only the option blocks that belong to the selected relay mode, and
+// collapse the whole relay body when the mode is Off.
 function modeChanged(n) {
   const sel = document.getElementById('r' + n + '_mode');
   if (!sel) return;
   document.querySelectorAll('.msec[data-r="' + n + '"]').forEach(d => {
     d.style.display = (d.dataset.m === sel.value) ? '' : 'none';
   });
+  const body = document.getElementById('r' + n + '_body');
+  if (body) body.style.display = (sel.value === '0') ? 'none' : '';  // 0=Off
 }
 
 // Show the raw min/max calibration block only when "Percent" scaling is chosen.
@@ -233,6 +270,15 @@ document.addEventListener('DOMContentLoaded', function () {
   if (document.querySelector('section.tab')) {
     showTab((location.hash || '#home').slice(1));
   }
+  // Collapse each I/O block whose enable toggle is off (and keep it in sync).
+  [['bme_en','bme_body'], ['ds_en','ds_body'], ['a1_en','a1_body'],
+   ['a2_en','a2_body'], ['btn_en','btn_body']].forEach(([cb, box]) => {
+    const el = document.getElementById(cb);
+    if (el) el.addEventListener('change', () => toggleBox(cb, box));
+    toggleBox(cb, box);
+  });
+  toggleI2c();
+  toggleProbe();
   modeChanged(1);
   modeChanged(2);
   toggleAnalog(1);
