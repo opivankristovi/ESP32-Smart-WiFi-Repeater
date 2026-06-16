@@ -37,6 +37,8 @@ This repository contains **two independent variants** in separate sketch folders
 
 Both variants share the same feature set, web portal design, MQTT topic structure, and Home Assistant integration. The rest of this README documents the **classic ESP32** build; the C3 folder has its own [`README.md`](ESP32-C3-WiFi-Repeater/README.md).
 
+---
+
 ## ✨ Features
 
 - 📶 **Real repeater** — concurrent AP + STA with NAPT/NAT, so AP clients route out to the internet.
@@ -86,6 +88,8 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
 <details>
 <summary><b>Table of contents</b></summary>
 
+- [Which version is right for you?](#-which-version-is-right-for-you)
+- [Features](#-features)
 - [What it looks like](#-what-it-looks-like)
 - [Quick Start](#-quick-start)
 - [Pin Map & Wiring](#-pin-map--wiring)
@@ -322,6 +326,8 @@ Fork the repo and send improvements or new features. Found a bug or have a sugge
 
 Licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
-You are free to **use, modify, share, and build on** this project for any **noncommercial** purpose — hobby, education, research, personal projects. **Commercial use of any kind (including selling) requires explicit written permission** from the author. The attribution notice — **Copyright Kristof Van Opstal** — must be kept in all copies and derived works.
+This project is **free for noncommercial use** and **source-available** (not "open source" in the OSI sense — that term specifically permits commercial use, which this license does not). You are free to **use, modify, share, and build on** it for any **noncommercial** purpose — hobby, education, research, personal projects. **Commercial use of any kind (including selling, or bundling into a product or paid service) requires explicit written permission** from the author. The attribution notice — **Copyright Kristof Van Opstal** — must be kept in all copies and derived works.
+
+**Can I use this commercially?** Not without written permission — but I'm happy to talk. If you'd like to use this in a product or commercial setting, [open an issue](../../issues) or get in touch and we can sort out a license. The goal isn't to lock the project away; it's simply that I made this freely available and don't want others profiting from it while I don't.
 
 See [LICENSE](LICENSE) for the full terms. Happy tinkering! 🚀
