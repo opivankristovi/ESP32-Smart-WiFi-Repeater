@@ -13,9 +13,30 @@
 
 ---
 
+> As far as I can find, no commercial product combines a true NAT Wi-Fi repeater with a Home Assistant IoT node in one device — so I built one.
+
 A single Arduino sketch that turns an ESP32 into a **true NAT Wi-Fi repeater** (devices on its access point get real internet, not an isolated network) — and, on top of that, a handy little **IoT edge node**. It reads sensors, drives relay outputs from local rules, publishes everything to **MQTT**, and **auto-registers in Home Assistant**. Every setting is entered through a captive-portal web page; nothing is hard-coded.
 
 This repository contains **two independent variants** in separate sketch folders:
+
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [Which version is right for you?](#-which-version-is-right-for-you)
+- [Features](#-features)
+- [What it looks like](#-what-it-looks-like)
+- [Quick Start](#-quick-start)
+- [Pin Map & Wiring](#-pin-map--wiring)
+- [Web Setup Walkthrough](#-web-setup-walkthrough)
+- [Sensors, MQTT & Relays](#-sensors-mqtt--relays)
+- [Home Assistant](#-home-assistant)
+- [How It Works](#-how-it-works)
+- [Troubleshooting](#-troubleshooting)
+- [Hardware & Enclosure](#-hardware--enclosure)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+</details>
 
 ## 🆚 Which version is right for you?
 
@@ -84,25 +105,6 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
 | Clock schedule | Time & timezone |
 |:--:|:--:|
 | ![Relay clock-schedule configuration with weekly slots](docs/relay-clock-schedule.png) | ![System tab with NTP, timezone and factory reset](docs/system-time-settings.png) |
-
-<details>
-<summary><b>Table of contents</b></summary>
-
-- [Which version is right for you?](#-which-version-is-right-for-you)
-- [Features](#-features)
-- [What it looks like](#-what-it-looks-like)
-- [Quick Start](#-quick-start)
-- [Pin Map & Wiring](#-pin-map--wiring)
-- [Web Setup Walkthrough](#-web-setup-walkthrough)
-- [Sensors, MQTT & Relays](#-sensors-mqtt--relays)
-- [Home Assistant](#-home-assistant)
-- [How It Works](#-how-it-works)
-- [Troubleshooting](#-troubleshooting)
-- [Hardware & Enclosure](#-hardware--enclosure)
-- [Contributing](#-contributing)
-- [License](#-license)
-
-</details>
 
 ---
 
