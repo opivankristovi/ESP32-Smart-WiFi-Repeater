@@ -4,7 +4,7 @@
 
 **Extend your Wi-Fi *and* read sensors, drive relays, and talk to Home Assistant — all configured from a phone, no re-flashing.**
 
-![Platform](https://img.shields.io/badge/platform-ESP32-blue)
+![Platform](https://img.shields.io/badge/platform-ESP32%20%7C%20ESP32--C3-blue)
 ![Framework](https://img.shields.io/badge/framework-Arduino-00979D)
 ![Core](https://img.shields.io/badge/ESP32%20core-2.x%20%7C%203.x-success)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
@@ -13,7 +13,29 @@
 
 ---
 
-A single ESP32 sketch that turns the board into a **true NAT Wi-Fi repeater** (devices on its access point get real internet, not an isolated network) — and, on top of that, a handy little **IoT edge node**. It can read a BME280, a DS18B20, and analog sensors (like an LDR), publish them to **MQTT**, drive **two relay/SSR outputs** from local rules, and **auto-register everything in Home Assistant**. Every setting is entered through a captive-portal web page; nothing is hard-coded.
+A single Arduino sketch that turns an ESP32 into a **true NAT Wi-Fi repeater** (devices on its access point get real internet, not an isolated network) — and, on top of that, a handy little **IoT edge node**. It reads sensors, drives relay outputs from local rules, publishes everything to **MQTT**, and **auto-registers in Home Assistant**. Every setting is entered through a captive-portal web page; nothing is hard-coded.
+
+This repository contains **two independent variants** in separate sketch folders:
+
+## 🆚 Which version is right for you?
+
+| | [`ESP32-WiFi-Repeater/`](ESP32-WiFi-Repeater/) | [`ESP32-C3-WiFi-Repeater/`](ESP32-C3-WiFi-Repeater/) |
+|---|---|---|
+| **Target board** | Classic ESP32 Dev Module | ESP32-C3 SuperMini |
+| **Architecture** | Xtensa dual-core | RISC-V single-core |
+| **I2C sensor** | BME280 / BMP280 / BMP180 on SDA 21, SCL 22 | Same chips on SDA 6, SCL 7 |
+| **Probe sensor** | DS18B20 / DHT11 / DHT22 on GPIO 4 | Same sensors on GPIO 5 |
+| **Inputs** | 2 × digital/touch (GPIO 32/33) + 2 × analog (GPIO 34/35) | 4 × unified inputs — each individually configurable as digital button **or** analog sensor (GPIO 0/1/3/4, all ADC1) |
+| **Capacitive touch** | ✅ Touch pads on GPIO 32/33 | ❌ Not available on C3 |
+| **Button → relay mapping** | Relay N follows Input N (fixed) | Any input can drive any relay (configurable) |
+| **Relay outputs** | GPIO 26 / 27 | GPIO 10 / 20 |
+| **Flash & RAM** | More headroom | Tighter (128 KB SRAM) |
+| **Board size** | Larger dev board | 22 × 18 mm SuperMini |
+
+**Choose the classic ESP32 variant** if you have a standard ESP32 dev board and want capacitive touch inputs.  
+**Choose the C3 variant** if you're using an ESP32-C3 SuperMini, need 4 flexible inputs, or want a more compact build.
+
+Both variants share the same feature set, web portal design, MQTT topic structure, and Home Assistant integration. The rest of this README documents the **classic ESP32** build; the C3 folder has its own [`README.md`](ESP32-C3-WiFi-Repeater/README.md).
 
 ## ✨ Features
 
@@ -106,17 +128,20 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
 ### Install the code
 
 1. **Download** this repo (green **Code → Download ZIP**, or `git clone`) and unzip it.
-2. **Place the sketch folder in your Arduino sketchbook.** Arduino requires a `.ino` file to live in a folder of the **same name**, inside your sketchbook directory:
+2. **Choose your variant** — copy the matching sketch folder into your Arduino sketchbook:
+   - **Classic ESP32 Dev Module** → copy **`ESP32-WiFi-Repeater/`**
+   - **ESP32-C3 SuperMini** → copy **`ESP32-C3-WiFi-Repeater/`**
+
+   Arduino requires a `.ino` file to live in a folder of the **same name**, inside your sketchbook directory:
    - **Windows:** `Documents\Arduino\`
    - **macOS:** `~/Documents/Arduino/`
    - **Linux:** `~/Arduino/`
 
-   Copy the **`ESP32-WiFi-Repeater/`** folder (the one containing `ESP32-WiFi-Repeater.ino` plus its `.h`/`.cpp` module tabs and `web_page.h`) there, so you end up with e.g.
-   `Documents\Arduino\ESP32-WiFi-Repeater\ESP32-WiFi-Repeater.ino`.
+   So you end up with e.g. `Documents\Arduino\ESP32-WiFi-Repeater\ESP32-WiFi-Repeater.ino`.
 
    > 💡 The exact sketchbook path is shown in *Arduino IDE → File → Preferences → "Sketchbook location"*.
-3. **Open** `ESP32-WiFi-Repeater.ino` — every module tab loads automatically. **Keep all files together in this one folder.**
-4. **Select your board** (e.g. *Tools → Board → ESP32 Arduino → ESP32 Dev Module*) and the serial **Port**, then click **Upload**. No code edits needed.
+3. **Open** the `.ino` file — every module tab loads automatically. **Keep all files together in the one folder.**
+4. **Select your board** — *Tools → Board → ESP32 Arduino →* **ESP32 Dev Module** (classic) or **ESP32C3 Dev Module** (C3) — and the serial **Port**, then click **Upload**. No code edits needed.
 
 ### First boot
 
