@@ -28,13 +28,13 @@ For the single-MCU builds see [`ESP32-WiFi-Repeater/`](../ESP32-WiFi-Repeater/) 
 
 | | Classic / C3 | **Udoo Key** |
 |--|--|--|
-| Configuration | Captive-portal web page (no re-flashing) | `config.h` (compile-time) |
+| Configuration | Captive-portal web page (no re-flashing) | **Captive-portal web page** (no re-flashing) |
 | I2C sensors | 1 | **2** (independent type and address per device) |
 | Inputs | 2 digital + 2 analog | 2 analog + 2 digital (on RP2040) |
 | Outputs | 2 relay/SSR | **4** digital / PWM (on RP2040) |
-| Home Assistant discovery | Auto (retained MQTT discovery) | Manual — raw MQTT topics only |
-| NTP clock schedules | ✅ | ❌ |
-| Web portal | ✅ | ❌ |
+| Home Assistant discovery | Auto (retained MQTT discovery) | **Auto** (retained MQTT discovery) |
+| NTP clock schedules | ✅ | ✅ |
+| Web portal | ✅ | ✅ |
 
 ## Sketches
 
@@ -49,9 +49,11 @@ Flash **both** sketches — one to each MCU on the same board.
 
 ### ESP32 side
 
-1. Edit [`esp32/RepeaterNodeESP32/config.h`](esp32/RepeaterNodeESP32/config.h) with your Wi-Fi and MQTT credentials.
-2. Open `RepeaterNodeESP32.ino` in Arduino IDE, select **ESP32 Dev Module**, upload.
-3. Libraries needed: **PubSubClient**, **ArduinoJson v7**.
+1. Open `RepeaterNodeESP32.ino` in Arduino IDE, select **ESP32 Dev Module**, upload.
+2. Libraries needed: **PubSubClient**, **ArduinoJson v7**.  
+   (`WebServer`, `DNSServer`, `Preferences` ship with the ESP32 core.)
+3. On first boot, join Wi-Fi **UdooKey-AP** / **repeater1** and browse to **http://192.168.4.1** to configure Wi-Fi credentials, MQTT broker, NTP timezone, and clock schedules.  
+   Alternatively, edit [`esp32/RepeaterNodeESP32/config.h`](esp32/RepeaterNodeESP32/config.h) with your defaults before flashing.
 
 ### RP2040 side
 
