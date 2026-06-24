@@ -45,15 +45,15 @@ This repository contains **three independent variants** in separate sketch folde
 |---|---|---|---|
 | **Target board** | Classic ESP32 Dev Module | ESP32-C3 SuperMini | Udoo Key (ESP32 + RP2040) |
 | **Architecture** | Xtensa dual-core | RISC-V single-core | Dual MCU: ESP32 for networking, RP2040 for I/O |
-| **Configuration** | Captive-portal web page | Captive-portal web page | `config.h` (compile-time) |
+| **Configuration** | Captive-portal web page | Captive-portal web page | Captive-portal web page (ESP32 side) + `config.h` for sensor types (RP2040 side) |
 | **I2C sensors** | 1 (BME280/BMP280/BMP180, SDA 21/SCL 22) | 1 (same chips, SDA 6/SCL 7) | **2** (independent type + address, on RP2040 GP4/GP5) |
 | **Probe sensor** | DS18B20/DHT on GPIO 4 | Same on GPIO 5 | DS18B20/DHT on RP2040 GP16 |
 | **Inputs** | 2 × digital/touch (GPIO 32/33) + 2 × analog (GPIO 34/35) | 4 × unified inputs — digital **or** analog each (GPIO 0/1/3/4) | 2 × analog + 2 × digital (RP2040 GP26/27, GP14/15) |
 | **Capacitive touch** | ✅ GPIO 32/33 | ❌ | ❌ |
 | **Outputs** | 2 relay/SSR (GPIO 26/27) | 2 relay/SSR (GPIO 10/20) | **4** digital/PWM (RP2040 GP17–20) |
-| **Web portal** | ✅ Full tabbed setup page | ✅ Full tabbed setup page | ❌ |
-| **HA auto-discovery** | ✅ | ✅ | ❌ (raw MQTT topics) |
-| **NTP clock schedules** | ✅ | ✅ | ❌ |
+| **Web portal** | ✅ Full tabbed setup page | ✅ Full tabbed setup page | ✅ Network / MQTT / System / Schedules tabs |
+| **HA auto-discovery** | ✅ | ✅ | ✅ |
+| **NTP clock schedules** | ✅ | ✅ | ✅ (per-output on/off times) |
 | **Board size** | Larger dev board | 22 × 18 mm SuperMini | Udoo Key PCB |
 
 **Choose the classic ESP32 variant** if you have a standard ESP32 dev board and want capacitive touch inputs.  
@@ -64,7 +64,7 @@ The classic and C3 variants share the same feature set, web portal design, MQTT 
 
 ### Udoo Key variant
 
-The Udoo Key build is architecturally different: the RP2040 owns all sensors and outputs, while the ESP32 stays focused on networking and MQTT. There is no captive portal — configure credentials in `config.h` before flashing. See [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) for full documentation, pin maps, and the MQTT topic tree.
+The Udoo Key build is architecturally different: the RP2040 owns all sensors and outputs, while the ESP32 handles networking, MQTT, and the web portal. The ESP32 side serves a captive-portal setup page (Network / MQTT / System / Schedules tabs) — no re-flashing needed to change credentials or settings. The RP2040 side still uses `config.h` for compile-time sensor type selection (BME280/BMP280/BMP180, DS18B20/DHT). See [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) for full documentation, pin maps, and the MQTT topic tree.
 
 ---
 
@@ -145,7 +145,7 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
 2. **Choose your variant** — copy the matching sketch folder into your Arduino sketchbook:
    - **Classic ESP32 Dev Module** → copy **`ESP32-WiFi-Repeater/`**
    - **ESP32-C3 SuperMini** → copy **`ESP32-C3-WiFi-Repeater/`**
-   - **Udoo Key** → see [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) — two separate sketches (one for each MCU), configured via `config.h`
+   - **Udoo Key** → see [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) — two separate sketches (one per MCU). The ESP32 side has a captive-portal setup page; the RP2040 side uses `config.h` for sensor type selection.
 
    Arduino requires a `.ino` file to live in a folder of the **same name**, inside your sketchbook directory:
    - **Windows:** `Documents\Arduino\`

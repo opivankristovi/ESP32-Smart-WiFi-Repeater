@@ -21,7 +21,7 @@ For the single-MCU builds see [`ESP32-WiFi-Repeater/`](../ESP32-WiFi-Repeater/) 
                    2× digital inputs
 ```
 
-- **ESP32** handles networking: STA + AP with NAT (true repeater), MQTT publish/subscribe, UART receive/send.
+- **ESP32** handles networking: STA + AP with NAT (true repeater), MQTT publish/subscribe, UART receive/send. Also runs a captive-portal web page for runtime configuration (Wi-Fi, MQTT, NTP, clock schedules), publishes Home Assistant auto-discovery topics, and controls outputs via NTP-synced per-output schedules.
 - **RP2040** handles all I/O: reads sensors and inputs every 10 s, sends a JSON packet to the ESP32, receives and applies output commands.
 
 ## Key differences from the single-MCU variants
@@ -113,7 +113,7 @@ JSON keys: `ia`/`ib` = I2C device A/B, `pr` = probe, `an` = analog array, `di` =
 
 ## MQTT topics
 
-All under `<TOPIC_BASE>/` (default `udookey/`, set in `config.h`).
+All under `<TOPIC_BASE>/` (default `udookey/`, configurable via the web portal or `config.h` on first flash).
 
 | Topic | Notes |
 |-------|-------|
@@ -135,6 +135,9 @@ All under `<TOPIC_BASE>/` (default `udookey/`, set in `config.h`).
 |---------|-------|--------|
 | PubSubClient | ✅ required | — |
 | ArduinoJson v7 | ✅ required | ✅ required |
+| WebServer | core-shipped | — |
+| DNSServer | core-shipped | — |
+| Preferences | core-shipped | — |
 | Adafruit BME280 + Unified Sensor | — | if `I2C_BME280` |
 | Adafruit BMP280 + Unified Sensor | — | if `I2C_BMP280` |
 | Adafruit BMP085 + Unified Sensor | — | if `I2C_BMP180` |
