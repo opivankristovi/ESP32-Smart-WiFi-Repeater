@@ -4,7 +4,7 @@
 
 **Extend your Wi-Fi *and* read sensors, drive relays, and talk to Home Assistant — all configured from a phone, no re-flashing.**
 
-![Platform](https://img.shields.io/badge/platform-ESP32%20%7C%20ESP32--C3-blue)
+![Platform](https://img.shields.io/badge/platform-ESP32%20%7C%20ESP32--C3%20%7C%20Udoo%20Key-blue)
 ![Framework](https://img.shields.io/badge/framework-Arduino-00979D)
 ![Core](https://img.shields.io/badge/ESP32%20core-2.x%20%7C%203.x-success)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)
@@ -17,12 +17,13 @@
 
 A single Arduino sketch that turns an ESP32 into a **true NAT Wi-Fi repeater** (devices on its access point get real internet, not an isolated network) — and, on top of that, a handy little **IoT edge node**. It reads sensors, drives relay outputs from local rules, publishes everything to **MQTT**, and **auto-registers in Home Assistant**. Every setting is entered through a captive-portal web page; nothing is hard-coded.
 
-This repository contains **two independent variants** in separate sketch folders:
+This repository contains **three independent variants** in separate sketch folders:
 
 <details>
 <summary><b>Table of contents</b></summary>
 
 - [Which version is right for you?](#-which-version-is-right-for-you)
+- [Udoo Key variant](#udoo-key-variant)
 - [Features](#-features)
 - [What it looks like](#-what-it-looks-like)
 - [Quick Start](#-quick-start)
@@ -40,23 +41,30 @@ This repository contains **two independent variants** in separate sketch folders
 
 ## 🆚 Which version is right for you?
 
-| | [`ESP32-WiFi-Repeater/`](ESP32-WiFi-Repeater/) | [`ESP32-C3-WiFi-Repeater/`](ESP32-C3-WiFi-Repeater/) |
-|---|---|---|
-| **Target board** | Classic ESP32 Dev Module | ESP32-C3 SuperMini |
-| **Architecture** | Xtensa dual-core | RISC-V single-core |
-| **I2C sensor** | BME280 / BMP280 / BMP180 on SDA 21, SCL 22 | Same chips on SDA 6, SCL 7 |
-| **Probe sensor** | DS18B20 / DHT11 / DHT22 on GPIO 4 | Same sensors on GPIO 5 |
-| **Inputs** | 2 × digital/touch (GPIO 32/33) + 2 × analog (GPIO 34/35) | 4 × unified inputs — each individually configurable as digital button **or** analog sensor (GPIO 0/1/3/4, all ADC1) |
-| **Capacitive touch** | ✅ Touch pads on GPIO 32/33 | ❌ Not available on C3 |
-| **Button → relay mapping** | Relay N follows Input N (fixed) | Any input can drive any relay (configurable) |
-| **Relay outputs** | GPIO 26 / 27 | GPIO 10 / 20 |
-| **Flash & RAM** | More headroom | Tighter (128 KB SRAM) |
-| **Board size** | Larger dev board | 22 × 18 mm SuperMini |
+| | [`ESP32-WiFi-Repeater/`](ESP32-WiFi-Repeater/) | [`ESP32-C3-WiFi-Repeater/`](ESP32-C3-WiFi-Repeater/) | [`UdooKey-WiFi-Repeater/`](UdooKey-WiFi-Repeater/) |
+|---|---|---|---|
+| **Target board** | Classic ESP32 Dev Module | ESP32-C3 SuperMini | Udoo Key (ESP32 + RP2040) |
+| **Architecture** | Xtensa dual-core | RISC-V single-core | Dual MCU: ESP32 for networking, RP2040 for I/O |
+| **Configuration** | Captive-portal web page | Captive-portal web page | `config.h` (compile-time) |
+| **I2C sensors** | 1 (BME280/BMP280/BMP180, SDA 21/SCL 22) | 1 (same chips, SDA 6/SCL 7) | **2** (independent type + address, on RP2040 GP4/GP5) |
+| **Probe sensor** | DS18B20/DHT on GPIO 4 | Same on GPIO 5 | DS18B20/DHT on RP2040 GP16 |
+| **Inputs** | 2 × digital/touch (GPIO 32/33) + 2 × analog (GPIO 34/35) | 4 × unified inputs — digital **or** analog each (GPIO 0/1/3/4) | 2 × analog + 2 × digital (RP2040 GP26/27, GP14/15) |
+| **Capacitive touch** | ✅ GPIO 32/33 | ❌ | ❌ |
+| **Outputs** | 2 relay/SSR (GPIO 26/27) | 2 relay/SSR (GPIO 10/20) | **4** digital/PWM (RP2040 GP17–20) |
+| **Web portal** | ✅ Full tabbed setup page | ✅ Full tabbed setup page | ❌ |
+| **HA auto-discovery** | ✅ | ✅ | ❌ (raw MQTT topics) |
+| **NTP clock schedules** | ✅ | ✅ | ❌ |
+| **Board size** | Larger dev board | 22 × 18 mm SuperMini | Udoo Key PCB |
 
 **Choose the classic ESP32 variant** if you have a standard ESP32 dev board and want capacitive touch inputs.  
-**Choose the C3 variant** if you're using an ESP32-C3 SuperMini, need 4 flexible inputs, or want a more compact build.
+**Choose the C3 variant** if you're using an ESP32-C3 SuperMini, need 4 flexible inputs, or want a more compact build.  
+**Choose the Udoo Key variant** if you have a Udoo Key board and want expanded I/O: two independent I2C sensors, a probe, and four PWM outputs — all on the RP2040's broader GPIO set.
 
-Both variants share the same feature set, web portal design, MQTT topic structure, and Home Assistant integration. The rest of this README documents the **classic ESP32** build; the C3 folder has its own [`README.md`](ESP32-C3-WiFi-Repeater/README.md).
+The classic and C3 variants share the same feature set, web portal design, MQTT structure, and Home Assistant integration. The rest of this README documents the **classic ESP32** build; the C3 and Udoo Key folders each have their own `README.md`.
+
+### Udoo Key variant
+
+The Udoo Key build is architecturally different: the RP2040 owns all sensors and outputs, while the ESP32 stays focused on networking and MQTT. There is no captive portal — configure credentials in `config.h` before flashing. See [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) for full documentation, pin maps, and the MQTT topic tree.
 
 ---
 
@@ -137,6 +145,7 @@ The **Relays tab** in action — every mode is configured in place. Below: a hum
 2. **Choose your variant** — copy the matching sketch folder into your Arduino sketchbook:
    - **Classic ESP32 Dev Module** → copy **`ESP32-WiFi-Repeater/`**
    - **ESP32-C3 SuperMini** → copy **`ESP32-C3-WiFi-Repeater/`**
+   - **Udoo Key** → see [`UdooKey-WiFi-Repeater/README.md`](UdooKey-WiFi-Repeater/README.md) — two separate sketches (one for each MCU), configured via `config.h`
 
    Arduino requires a `.ino` file to live in a folder of the **same name**, inside your sketchbook directory:
    - **Windows:** `Documents\Arduino\`
