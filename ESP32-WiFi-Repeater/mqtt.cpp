@@ -34,8 +34,7 @@ static void onMessage(char* topic, byte* payload, unsigned int len) {
     String cmd = b + "/relay/" + String(i + 1) + "/set";
     if (t != cmd) continue;
     if (!config.relays[i].allowMqtt) return;
-    String msg;
-    for (unsigned int k = 0; k < len; k++) msg += (char)payload[k];
+    String msg((char*)payload, len);
     msg.trim();
     msg.toUpperCase();
     if (msg == "ON" || msg == "1" || msg == "TRUE")       Relays::setState(i, true);
