@@ -331,14 +331,15 @@ static void handleMqtt() {
 
 static void handleSaveMqtt() {
     strlcpy(cfg.mqttHost,   server.arg("mh").c_str(),  sizeof(cfg.mqttHost));
-    cfg.mqttPort =           server.arg("mp").toInt();
+    int p = server.arg("mp").toInt();
+    if (p <= 0 || p > 65535) cfg.mqttPort = 1883;
+    else cfg.mqttPort = p;
     strlcpy(cfg.mqttUser,   server.arg("mu").c_str(),  sizeof(cfg.mqttUser));
     strlcpy(cfg.mqttPass,   server.arg("mpw").c_str(), sizeof(cfg.mqttPass));
     strlcpy(cfg.mqttClient, server.arg("mc").c_str(),  sizeof(cfg.mqttClient));
     strlcpy(cfg.topicBase,  server.arg("tb").c_str(),  sizeof(cfg.topicBase));
     cfg.haEnabled =          server.hasArg("ha");
     strlcpy(cfg.haPrefix,   server.arg("hap").c_str(), sizeof(cfg.haPrefix));
-    if (!cfg.mqttPort) cfg.mqttPort = 1883;
     saveSettings();
     rebootPage("MQTT settings saved.");
 }
