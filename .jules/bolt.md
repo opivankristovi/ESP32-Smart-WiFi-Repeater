@@ -1,0 +1,1 @@
+## 2024-10-15 - Pre-allocating string capacity \n **Learning:** Avoid heap fragmentation in embedded projects by using `.reserve()` before large string operations. \n **Action:** Check for missing `.reserve()` in other places where `String` builds large payloads.
