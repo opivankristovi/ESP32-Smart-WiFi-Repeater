@@ -729,8 +729,9 @@ static void handleMqtt() {
   MqttConfig& m = config.mqtt;
   m.enabled = server.hasArg("mq_en");
   strlcpy(m.host, server.arg("mq_host").c_str(), sizeof(m.host));
-  m.port = server.arg("mq_port").toInt();
-  if (m.port == 0) m.port = 1883;
+  int p = server.arg("mq_port").toInt();
+  if (p <= 0 || p > 65535) m.port = 1883;
+  else m.port = p;
   strlcpy(m.user, server.arg("mq_user").c_str(), sizeof(m.user));
   if (server.arg("mq_pass").length())  // keep existing if left blank
     strlcpy(m.pass, server.arg("mq_pass").c_str(), sizeof(m.pass));

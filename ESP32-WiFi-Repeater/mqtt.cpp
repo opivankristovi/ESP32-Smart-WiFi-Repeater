@@ -34,8 +34,7 @@ static void onMessage(char* topic, byte* payload, unsigned int len) {
     String cmd = b + "/relay/" + String(i + 1) + "/set";
     if (t != cmd) continue;
     if (!config.relays[i].allowMqtt) return;
-    String msg;
-    for (unsigned int k = 0; k < len; k++) msg += (char)payload[k];
+    String msg((char*)payload, len);
     msg.trim();
     msg.toUpperCase();
     if (msg == "ON" || msg == "1" || msg == "TRUE")       Relays::setState(i, true);
@@ -97,10 +96,22 @@ static void sensorDisc(const String& key, const String& name,
 }
 
 static void relayDisc(int i) {
-  String key  = "relay" + String(i + 1);
-  String name = config.relays[i].name[0] ? String(config.relays[i].name)
-                                         : ("Relay " + String(i + 1));
-  String stateTopic = base() + "/relay/" + String(i + 1) + "/state";
+  char key[16];
+  snprintf(key, sizeof(key), "relay%d", i + 1);
+
+  String name;
+  if (config.relays[i].name[0]) {
+    name = config.relays[i].name;
+  } else {
+    char nameBuf[16];
+    snprintf(nameBuf, sizeof(nameBuf), "Relay %d", i + 1);
+    name = nameBuf;
+  }
+
+  String stateTopic = base();
+  stateTopic += "/relay/";
+  stateTopic += (i + 1);
+  stateTopic += "/state";
 
   JsonDocument doc;
   doc["name"]        = name;
@@ -111,7 +122,11 @@ static void relayDisc(int i) {
   addDeviceAndAvail(doc);
 
   if (config.relays[i].allowMqtt) {
-    doc["command_topic"] = base() + "/relay/" + String(i + 1) + "/set";
+    String commandTopic = base();
+    commandTopic += "/relay/";
+    commandTopic += (i + 1);
+    commandTopic += "/set";
+    doc["command_topic"] = commandTopic;
     pubDisc("switch", key, doc);
     removeDisc("binary_sensor", key);  // drop the read-only variant if present
   } else {
@@ -122,14 +137,29 @@ static void relayDisc(int i) {
 
 // Touch/button input -> read-only binary_sensor (so HA automations can react).
 static void inputDisc(int i) {
-  String key = "input" + String(i + 1);
+  char key[16];
+  snprintf(key, sizeof(key), "input%d", i + 1);
+
   if (!config.inputs[i].enabled) { removeDisc("binary_sensor", key); return; }
-  String name = config.inputs[i].name[0] ? String(config.inputs[i].name)
-                                         : ("Input " + String(i + 1));
+
+  String name;
+  if (config.inputs[i].name[0]) {
+    name = config.inputs[i].name;
+  } else {
+    char nameBuf[16];
+    snprintf(nameBuf, sizeof(nameBuf), "Input %d", i + 1);
+    name = nameBuf;
+  }
+
+  String stateTopic = base();
+  stateTopic += "/input/";
+  stateTopic += (i + 1);
+  stateTopic += "/state";
+
   JsonDocument doc;
   doc["name"]        = name;
   doc["unique_id"]   = String(config.mqtt.clientId) + "_" + key;
-  doc["state_topic"] = base() + "/input/" + String(i + 1) + "/state";
+  doc["state_topic"] = stateTopic;
   doc["payload_on"]  = "ON";
   doc["payload_off"] = "OFF";
   addDeviceAndAvail(doc);
