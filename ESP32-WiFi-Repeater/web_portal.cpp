@@ -171,13 +171,15 @@ static String appShell() {
       "<circle cx=\"52.8\" cy=\"20\" r=\"5\"/><circle cx=\"52.8\" cy=\"44\" r=\"5\"/>"
       "<circle cx=\"32\" cy=\"56\" r=\"5\"/><circle cx=\"11.2\" cy=\"44\" r=\"5\"/>"
       "<circle cx=\"11.2\" cy=\"20\" r=\"5\"/></g></svg>";
-  String s = "<header class=\"hdr\"><div class=\"appbar\">"
-             "<span class=\"brand\">" + String(kLogo) +
-             "<h1>ESP32 Smart Repeater</h1></span>"
-             "<span class=\"dotlbl\"><span class=\"dot " + wifiDot +
-             "\"></span>WiFi</span>"
-             "<span class=\"dotlbl\"><span class=\"dot " + mqttDot +
-             "\"></span>MQTT</span></div>";
+  String s;
+  s.reserve(1200);
+  s = "<header class=\"hdr\"><div class=\"appbar\">"
+      "<span class=\"brand\">" + String(kLogo) +
+      "<h1>ESP32 Smart Repeater</h1></span>"
+      "<span class=\"dotlbl\"><span class=\"dot " + wifiDot +
+      "\"></span>WiFi</span>"
+      "<span class=\"dotlbl\"><span class=\"dot " + mqttDot +
+      "\"></span>MQTT</span></div>";
   struct { const char* id; const char* label; } tabs[] = {
       {"home", "Home"},     {"network", "Network"}, {"mqtt", "MQTT"},
       {"sensors", "Sensors"}, {"relays", "Relays"}, {"system", "System"}};
