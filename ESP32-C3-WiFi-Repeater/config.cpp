@@ -48,7 +48,7 @@ static String toJson() {
   b["en"]   = config.i2c.enabled;
   b["type"] = (int)config.i2c.type;
   b["addr"] = config.i2c.address;
-  b["tu"]   = (config.i2c.tempUnit == 'F') ? "F" : "C";
+  b["tu"]   = (toupper(config.i2c.tempUnit) == 'F') ? "F" : "C";
   b["inhg"] = config.i2c.pressureInHg;
   thrToJson(b["t"].to<JsonObject>(), config.i2c.tTemp);
   thrToJson(b["h"].to<JsonObject>(), config.i2c.tHum);
@@ -57,7 +57,7 @@ static String toJson() {
   JsonObject d = doc["ds"].to<JsonObject>();
   d["en"]   = config.probe.enabled;
   d["type"] = (int)config.probe.type;
-  d["tu"]   = (config.probe.tempUnit == 'F') ? "F" : "C";
+  d["tu"]   = (toupper(config.i2c.tempUnit) == 'F') ? "F" : "C";
   thrToJson(d["t"].to<JsonObject>(), config.probe.tTemp);
   thrToJson(d["h"].to<JsonObject>(), config.probe.tHum);
 
