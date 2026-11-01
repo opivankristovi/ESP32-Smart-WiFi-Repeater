@@ -649,9 +649,18 @@ static int parseTime(const char* hhmm) {
 
 static void checkSchedules() {
     if (!ntpSynced) return;
-    struct tm t;
-    if (!getLocalTime(&t, 0)) return;
-    int now = t.tm_hour * 60 + t.tm_min;
+    static int cachedNow = -1;
+    static unsigned long lastSyncMillis = 0;
+
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastSyncMillis >= 60000 || cachedNow == -1) {
+        struct tm t;
+        if (!getLocalTime(&t, 0)) return;
+        cachedNow = t.tm_hour * 60 + t.tm_min;
+        lastSyncMillis = currentMillis - (t.tm_sec * 1000);
+    }
+
+    int now = cachedNow;
     for (int i = 0; i < 4; i++) {
         if (!cfg.schedule[i].enabled) continue;
         int onM  = parseTime(cfg.schedule[i].onTime);
