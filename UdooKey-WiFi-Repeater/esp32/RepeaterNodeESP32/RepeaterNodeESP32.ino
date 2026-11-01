@@ -30,6 +30,10 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
+static bool rebootPending = false;
+static unsigned long rebootStart = 0;
+static unsigned long rebootDelayMs = 400;
+
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   #include "lwip/lwip_napt.h"
 #else
@@ -230,8 +234,9 @@ static void rebootPage(const char* msg) {
     h += "</p><p>Rebooting \xe2\x80\x94 <a href='/'>refresh</a> in ~5 s.</p>";
     h += pageFoot();
     server.send(200, "text/html", h);
-    delay(800);
-    ESP.restart();
+    rebootPending = true;
+    rebootStart = millis();
+    rebootDelayMs = 800;
 }
 
 static void handleRoot() {
@@ -274,11 +279,12 @@ static void handleReset() {
     server.send(200, "text/html",
                 pageHead() + "<h3>Resetting\xe2\x80\xa6</h3>"
                 "<p>All settings cleared. Rebooting.</p>" + pageFoot());
-    delay(400);
     Preferences p;
     p.begin("repeater", false); p.clear(); p.end();
     p.begin("settings", false); p.clear(); p.end();
-    delay(400); ESP.restart();
+    rebootPending = true;
+    rebootStart = millis();
+    rebootDelayMs = 800; // 400 + 400 total delay
 }
 
 static void handleNetwork() {
@@ -772,4 +778,7 @@ void loop() {
     readUART();
     checkNtp();
     checkSchedules();
+    if (rebootPending && (millis() - rebootStart >= rebootDelayMs)) {
+        ESP.restart();
+    }
 }

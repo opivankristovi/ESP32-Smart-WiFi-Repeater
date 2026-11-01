@@ -15,6 +15,9 @@ namespace WebPortal {
 
 static WebServer server(80);
 
+static bool rebootPending = false;
+static unsigned long rebootStart = 0;
+
 // ---------------------------------------------------------------------------
 // Small HTML builder helpers
 // ---------------------------------------------------------------------------
@@ -661,8 +664,8 @@ static void sendRebootNotice(const String& msg, const String& anchor = "") {
           "\"></div>";
   html += FPSTR(PAGE_FOOT);
   server.send(200, "text/html", html);
-  delay(400);
-  ESP.restart();
+  rebootPending = true;
+  rebootStart = millis();
 }
 
 // ---------------------------------------------------------------------------
@@ -943,6 +946,11 @@ void begin() {
                 Net::apIp().toString().c_str());
 }
 
-void handle() { server.handleClient(); }
+void handle() {
+  server.handleClient();
+  if (rebootPending && (millis() - rebootStart >= 400)) {
+    ESP.restart();
+  }
+}
 
 }  // namespace WebPortal
